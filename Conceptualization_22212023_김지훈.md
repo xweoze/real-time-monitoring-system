@@ -1,5 +1,5 @@
-//22212023_컴퓨터공학과_김지훈
-//프로젝트 진행하고 있는 GitHub repository 주소: https://github.com/xweoze/real-time-monitoring-system
+<!-- //22212023_컴퓨터공학과_김지훈 -->
+<!-- 프로젝트 진행하고 있는 GitHub repository 주소: https://github.com/xweoze/real-time-monitoring-system -->
 
 # Real Time Location System
 
