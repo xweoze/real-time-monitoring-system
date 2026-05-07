@@ -1,0 +1,517 @@
+
+<!-- 22212023 컴퓨터공학과 김지훈 -->
+<!-- GitHub Repository : https://github.com/xweoze/real-time-monitoring-system -->
+
+# Real Time Location System
+
+## Analysis Document
+
+---
+
+# [ Revision history ]
+
+| Revision date | Version # | Description | Author |
+|---|---|---|---|
+| 2026-03-27 | 0.01 | First Documentation | 김지훈 |
+| 2026-03-28 | 0.02 | Use case 수정 및 추가 | 김지훈 |
+| 2026-03-29 | 1.00 | Analysis Document 작성 | 김지훈 |
+
+---
+
+# [ Contents ]
+
+1. Introduction ···························································································································· 1  
+2. Use case analysis ················································································································· 2  
+3. Domain analysis ··················································································································· 12  
+4. User Interface Prototype ··································································································· 14  
+5. Glossary ··································································································································· 21  
+6. References ······························································································································ 21  
+
+---
+
+# 1. Introduction
+
+본 문서는 Conceptualization 단계에서 정의한  
+“재난 상황 취약계층 실시간 위치 및 상태 모니터링 시스템”에 대한  
+Analysis 단계 문서이다.
+
+본 단계에서는 시스템이 실제로 어떤 방식으로 동작하는지에 대한  
+Use Case 분석, Domain 구조 분석, 사용자 인터페이스 설계를 중심으로 기술한다.
+
+---
+
+## 1.1 Summary
+
+최근 자연재해, 전쟁, 화재, 붕괴 사고와 같은 재난 상황이 증가하면서  
+취약계층의 신속한 구조와 위치 파악의 중요성이 커지고 있다.
+
+특히 노인, 여성, 아동, 장애인과 같은 취약계층은  
+위험 상황 발생 시 대처 능력이 상대적으로 부족하며,  
+구조 인력이 위치를 빠르게 파악하지 못하면  
+생명에 직접적인 위험이 발생할 수 있다.
+
+따라서 본 시스템은 다음과 같은 목적을 가진다.
+
+- 사용자의 위치와 상태를 실시간으로 수집
+- 위험 지역 진입 여부 자동 감지
+- SOS 요청 기능 제공
+- 관제 시스템을 통한 중앙 모니터링
+- 구조 지원 및 위험 대응 시간 최소화
+
+이를 통해 재난 상황에서도  
+빠르고 효율적인 구조 지원이 가능하도록 한다.
+
+---
+
+## 1.2 Business Goals
+
+- 취약계층의 위치를 실시간으로 모니터링 할 수 있어야 한다.
+- 위험 지역 진입 여부를 자동으로 감지할 수 있어야 한다.
+- 긴급 상황 시 SOS 요청 기능을 제공해야 한다.
+- 관제자가 사용자 상태를 중앙에서 확인할 수 있어야 한다.
+- 위험 상황 발생 시 빠르게 대응할 수 있어야 한다.
+- 사용자 이동 경로를 추적 및 분석할 수 있어야 한다.
+
+---
+
+## 1.3 Technical Goals
+
+- 클라이언트와 서버 간 안정적인 통신이 가능해야 한다.
+- 실시간 위치 데이터를 빠르게 처리할 수 있어야 한다.
+- 다수의 클라이언트를 동시에 처리할 수 있어야 한다.
+- 위험 지역 감지 알고리즘이 정확해야 한다.
+- SOS 요청이 지연 없이 전달되어야 한다.
+- 멀티스레드 기반 구조를 통해 동시성을 보장해야 한다.
+
+---
+
+# 2. Use case analysis
+
+---
+
+## 2.1 Use Case Diagram
+
+### Actor
+
+- Client
+- Monitoring(Admin)
+
+---
+
+### Use Case List
+
+- System Connect
+- Send Location & State
+- Danger Detection
+- Danger Alert
+- Send SOS
+- Monitoring Clients
+- Rescue Support
+- System Exit
+
+---
+
+## 2.2 Use Case Description
+
+---
+
+# Use case #1 : System Connect
+
+## GENERAL CHARACTERISTICS
+
+| Item | Description |
+|---|---|
+| Summary | 사용자가 시스템에 접속하여 고유 ID를 부여받는다. |
+| Scope | Real Time Location System |
+| Level | User Level |
+| Primary Actor | Client |
+| Preconditions | 시스템 서버가 실행 중이어야 한다. |
+| Trigger | 사용자가 프로그램을 실행한다. |
+| Success Post Condition | 서버와 연결되고 사용자 ID가 생성된다. |
+| Failed Post Condition | 시스템 연결 실패 메시지를 출력한다. |
+
+---
+
+## MAIN SUCCESS SCENARIO
+
+| Step | Action |
+|---|---|
+| 1 | 사용자가 시스템을 실행한다. |
+| 2 | 클라이언트가 서버 연결을 시도한다. |
+| 3 | 서버가 클라이언트를 승인한다. |
+| 4 | 서버가 사용자 ID를 생성한다. |
+| 5 | 사용자가 시스템에 접속된다. |
+
+---
+
+## EXTENSION SCENARIOS
+
+| Step | Branching Action |
+|---|---|
+| 2 | 서버 연결 실패 시 재접속을 시도한다. |
+| 3 | 서버가 가득 찬 경우 접속 거부 메시지를 출력한다. |
+
+---
+
+# Use case #2 : Send Location & State
+
+## GENERAL CHARACTERISTICS
+
+| Item | Description |
+|---|---|
+| Summary | 사용자가 자신의 위치 및 상태를 서버로 전송한다. |
+| Scope | Real Time Location System |
+| Level | User Level |
+| Primary Actor | Client |
+| Preconditions | 서버와 연결된 상태여야 한다. |
+| Trigger | 사용자의 위치가 변경된다. |
+| Success Post Condition | 위치 및 상태 정보가 서버에 저장된다. |
+| Failed Post Condition | 위치 전송 실패 메시지를 출력한다. |
+
+---
+
+## MAIN SUCCESS SCENARIO
+
+| Step | Action |
+|---|---|
+| 1 | 사용자가 이동한다. |
+| 2 | 클라이언트가 위치 데이터를 생성한다. |
+| 3 | 위치 및 상태 정보를 서버로 전송한다. |
+| 4 | 서버가 데이터를 저장한다. |
+
+---
+
+# Use case #3 : Danger Detection
+
+## GENERAL CHARACTERISTICS
+
+| Item | Description |
+|---|---|
+| Summary | 시스템이 위험 지역 진입 여부를 감지한다. |
+| Scope | Real Time Location System |
+| Level | System Level |
+| Primary Actor | System |
+| Preconditions | 위치 데이터가 수신되어야 한다. |
+| Trigger | 사용자의 위치가 변경된다. |
+| Success Post Condition | 위험 상태 여부를 판단한다. |
+| Failed Post Condition | 위험 지역 분석 실패 |
+
+---
+
+## MAIN SUCCESS SCENARIO
+
+| Step | Action |
+|---|---|
+| 1 | 서버가 위치 데이터를 수신한다. |
+| 2 | 위험 지역 데이터와 비교한다. |
+| 3 | 위험 여부를 판단한다. |
+| 4 | 위험 상태를 사용자에게 전달한다. |
+
+---
+
+# Use case #4 : Danger Alert
+
+## GENERAL CHARACTERISTICS
+
+| Item | Description |
+|---|---|
+| Summary | 위험 지역 진입 시 사용자에게 경고한다. |
+| Scope | Real Time Location System |
+| Level | System Level |
+| Primary Actor | System |
+| Preconditions | 위험 상태가 감지되어야 한다. |
+| Trigger | 위험 지역 진입 |
+| Success Post Condition | 경고 메시지가 전달된다. |
+| Failed Post Condition | 경고 전송 실패 |
+
+---
+
+## MAIN SUCCESS SCENARIO
+
+| Step | Action |
+|---|---|
+| 1 | 시스템이 위험 상태를 감지한다. |
+| 2 | 클라이언트에게 경고 메시지를 전송한다. |
+| 3 | 관제 시스템에도 위험 상태를 전달한다. |
+
+---
+
+# Use case #5 : Send SOS
+
+## GENERAL CHARACTERISTICS
+
+| Item | Description |
+|---|---|
+| Summary | 사용자가 긴급 구조 요청을 보낸다. |
+| Scope | Real Time Location System |
+| Level | User Level |
+| Primary Actor | Client |
+| Preconditions | 서버와 연결된 상태여야 한다. |
+| Trigger | 사용자가 SOS 버튼 클릭 |
+| Success Post Condition | SOS 요청이 전달된다. |
+| Failed Post Condition | SOS 요청 실패 |
+
+---
+
+## MAIN SUCCESS SCENARIO
+
+| Step | Action |
+|---|---|
+| 1 | 사용자가 SOS 버튼을 누른다. |
+| 2 | 클라이언트가 SOS 데이터를 생성한다. |
+| 3 | 서버로 SOS 요청을 전송한다. |
+| 4 | 서버가 관제 시스템으로 전달한다. |
+
+---
+
+# Use case #6 : Monitoring Clients
+
+## GENERAL CHARACTERISTICS
+
+| Item | Description |
+|---|---|
+| Summary | 관제자가 사용자 위치와 상태를 실시간 모니터링 한다. |
+| Scope | Real Time Location System |
+| Level | Admin Level |
+| Primary Actor | Monitoring |
+| Preconditions | 사용자가 서버에 접속되어 있어야 한다. |
+| Trigger | 관제 시스템 실행 |
+| Success Post Condition | 사용자 상태를 실시간 확인 가능 |
+| Failed Post Condition | 사용자 데이터 확인 실패 |
+
+---
+
+## MAIN SUCCESS SCENARIO
+
+| Step | Action |
+|---|---|
+| 1 | 관제 시스템이 서버에 연결된다. |
+| 2 | 서버가 사용자 데이터를 전송한다. |
+| 3 | 관제자가 사용자 상태를 확인한다. |
+
+---
+
+# Use case #7 : Rescue Support
+
+## GENERAL CHARACTERISTICS
+
+| Item | Description |
+|---|---|
+| Summary | 관제자가 구조 지원을 수행한다. |
+| Scope | Real Time Location System |
+| Level | Admin Level |
+| Primary Actor | Monitoring |
+| Preconditions | 위험 상황이 발생해야 한다. |
+| Trigger | SOS 요청 또는 위험 감지 |
+| Success Post Condition | 구조 지원 수행 |
+| Failed Post Condition | 구조 지원 실패 |
+
+---
+
+## MAIN SUCCESS SCENARIO
+
+| Step | Action |
+|---|---|
+| 1 | 관제자가 위험 상황을 확인한다. |
+| 2 | 구조 인력에게 위치 정보를 전달한다. |
+| 3 | 구조 요청을 처리한다. |
+
+---
+
+# Use case #8 : System Exit
+
+## GENERAL CHARACTERISTICS
+
+| Item | Description |
+|---|---|
+| Summary | 사용자가 시스템 접속을 종료한다. |
+| Scope | Real Time Location System |
+| Level | User Level |
+| Primary Actor | Client |
+| Preconditions | 시스템 접속 상태 |
+| Trigger | 사용자가 종료 버튼 클릭 |
+| Success Post Condition | 서버 연결 종료 |
+| Failed Post Condition | 연결 종료 실패 |
+
+---
+
+## MAIN SUCCESS SCENARIO
+
+| Step | Action |
+|---|---|
+| 1 | 사용자가 종료 버튼을 누른다. |
+| 2 | 클라이언트가 종료 메시지를 전송한다. |
+| 3 | 서버가 연결을 종료한다. |
+
+---
+
+# 3. Domain analysis
+
+본 시스템은 클라이언트, 서버, 관제 시스템 구조를 기반으로 구성된다.
+
+---
+
+## 3.1 Domain Structure
+
+### 1) Client
+
+사용자의 위치와 상태를 서버에 전송하는 모듈이다.
+
+주요 기능
+
+- 위치 전송
+- 상태 정보 전송
+- SOS 요청
+- 위험 경고 수신
+
+---
+
+### 2) Server
+
+클라이언트와 관제 시스템 사이의 통신을 처리하는 핵심 모듈이다.
+
+주요 기능
+
+- 클라이언트 연결 관리
+- 데이터 저장
+- 위험 감지
+- SOS 전달
+- 위치 동기화
+
+---
+
+### 3) Monitoring System
+
+관제자가 사용하는 시스템이다.
+
+주요 기능
+
+- 사용자 위치 확인
+- 위험 사용자 감지
+- SOS 확인
+- 구조 지원
+
+---
+
+### 4) Danger Detector
+
+사용자의 위치 데이터를 기반으로 위험 지역 진입 여부를 판단한다.
+
+주요 기능
+
+- 위험 지역 비교
+- 위험 상태 판단
+- 경고 발생
+
+---
+
+### 5) SOS Manager
+
+사용자의 SOS 요청을 처리하는 모듈이다.
+
+주요 기능
+
+- SOS 요청 수신
+- 위치 정보 전달
+- 관제 시스템 알림
+
+---
+
+### 6) Client Manager
+
+접속한 사용자 정보를 관리한다.
+
+주요 기능
+
+- 클라이언트 등록
+- 클라이언트 제거
+- 상태 관리
+
+---
+
+# 4. User Interface Prototype
+
+---
+
+## 4.1 System Connect
+
+프로그램 실행 시 사용자는 서버에 접속한다.
+
+화면 구성
+
+- Connect 버튼
+- 사용자 상태 표시
+- 서버 연결 상태 표시
+
+---
+
+## 4.2 Monitoring Screen
+
+관제 시스템의 메인 화면이다.
+
+화면 구성
+
+- 사용자 위치 맵
+- 사용자 상태 표시
+- 위험 사용자 리스트
+- SOS 요청 리스트
+
+---
+
+## 4.3 Danger Alert
+
+사용자가 위험 지역에 진입하면 경고 메시지를 출력한다.
+
+화면 구성
+
+- 위험 경고 팝업
+- 위험 지역 정보
+- 현재 위치 정보
+
+---
+
+## 4.4 SOS Request
+
+사용자가 긴급 구조 요청을 전송하는 화면이다.
+
+화면 구성
+
+- SOS 버튼
+- 현재 위치 표시
+- 상태 정보 표시
+
+---
+
+## 4.5 Client Route
+
+관제자가 사용자의 이동 경로를 확인하는 화면이다.
+
+화면 구성
+
+- 이동 경로 맵
+- 시간 정보
+- 위치 로그
+
+---
+
+# 5. Glossary
+
+| Term | Description |
+|---|---|
+| Client | 시스템을 사용하는 사용자 |
+| Monitoring | 관제 시스템 사용자 |
+| SOS | 긴급 구조 요청 신호 |
+| Server | 데이터를 처리하는 중앙 시스템 |
+| Real Time | 실시간 처리 방식 |
+| Thread | 프로그램 실행 흐름 단위 |
+| Protocol | 데이터 통신 규약 |
+| Danger Area | 위험 지역 |
+| Monitoring System | 사용자 상태를 관제하는 시스템 |
+| Location Data | 사용자 위치 정보 |
+
+---
+
+# 6. References
+
+- 모든 다이어그램 및 구조도는 직접 제작함
+- GitHub Repository : https://github.com/xweoze/real-time-monitoring-system
