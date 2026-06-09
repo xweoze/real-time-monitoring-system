@@ -1,0 +1,55 @@
+:root {
+  color-scheme: dark;
+  --bg: #07111f;
+  --panel: rgba(16, 31, 51, 0.88);
+  --panel-strong: #12243a;
+  --line: rgba(164, 190, 218, 0.15);
+  --text: #f2f7fb;
+  --muted: #8fa6bd;
+  --cyan: #41d9cf;
+  --blue: #5296ff;
+  --orange: #ffb84d;
+  --red: #ff5d6c;
+  --green: #45d483;
+  --shadow: 0 22px 60px rgba(0, 0, 0, 0.28);
+  font-family: Inter, Pretendard, "Noto Sans KR", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); }
+button, input, select, textarea { font: inherit; }
+button { border: 0; cursor: pointer; }
+.muted { color: var(--muted); }
+.eyebrow {
+  color: var(--cyan); font-size: 11px; font-weight: 800; letter-spacing: .16em;
+  text-transform: uppercase;
+}
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+  box-shadow: 0 0 14px var(--green); display: inline-block;
+}
+.pill {
+  display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line);
+  border-radius: 999px; padding: 7px 11px; color: var(--muted); font-size: 12px;
+  background: rgba(255,255,255,.035);
+}
+.btn {
+  border-radius: 12px; padding: 11px 16px; color: white; background: var(--panel-strong);
+  transition: transform .18s ease, filter .18s ease;
+}
+.btn:hover { filter: brightness(1.14); transform: translateY(-1px); }
+.btn-primary { background: linear-gradient(135deg, #2878ef, #45b7ec); }
+.btn-danger { background: linear-gradient(135deg, #e93f54, #ff715f); }
+.btn-success { background: linear-gradient(135deg, #1b9d67, #47cf85); color: #06140e; font-weight: 800; }
+.panel {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+.empty { color: var(--muted); text-align: center; padding: 35px 16px; font-size: 13px; }
+.toast {
+  position: fixed; z-index: 100; left: 50%; bottom: 24px; transform: translate(-50%, 20px);
+  padding: 12px 18px; border: 1px solid var(--line); border-radius: 12px;
+  background: #14263d; box-shadow: var(--shadow); opacity: 0; pointer-events: none;
+  transition: .25s ease;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }

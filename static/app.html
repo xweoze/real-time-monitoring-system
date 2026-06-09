@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07111f">
+  <title>RTLS 안전 알림 앱</title>
+  <link rel="stylesheet" href="/static/common.css">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="phone">
+    <header>
+      <div><span class="eyebrow">RTLS Safety</span><h1>안전 위치 알림</h1></div>
+      <span id="connectionPill" class="pill"><i class="status-dot offline"></i> 연결 안 됨</span>
+    </header>
+
+    <section id="setupCard" class="setup panel">
+      <span class="eyebrow">Start Monitoring</span>
+      <h2>안전 서비스를 시작합니다</h2>
+      <p>이름을 입력하면 관제센터와 연결되고 현재 위치를 전송할 수 있습니다.</p>
+      <label>사용자 이름<input id="nameInput" maxlength="30" placeholder="예: 김지훈"></label>
+      <button id="connectBtn" class="btn btn-primary">관제센터 연결</button>
+    </section>
+
+    <div id="appContent" hidden>
+      <section id="hero" class="hero safe">
+        <div class="hero-orbit"><div class="shield">✓</div></div>
+        <span id="heroEyebrow" class="eyebrow">Current Status</span>
+        <h2 id="statusTitle">현재 안전합니다</h2>
+        <p id="statusMessage">위치 정보를 관제센터와 공유하고 있습니다.</p>
+      </section>
+
+      <section class="info-grid">
+        <article class="panel"><span>사용자 ID</span><strong id="clientId">-</strong></article>
+        <article class="panel"><span>최근 전송</span><strong id="lastUpdate">-</strong></article>
+      </section>
+
+      <section class="location panel">
+        <div class="section-title"><div><span class="eyebrow">Live Location</span><h3>현재 위치</h3></div><button id="locateBtn" class="icon-btn" title="현재 위치">◎</button></div>
+        <div class="coordinates"><div><label>위도</label><input id="latInput" type="number" step="0.00001" value="37.51200"></div><div><label>경도</label><input id="lngInput" type="number" step="0.00001" value="127.01000"></div></div>
+        <div class="location-actions"><button id="sendBtn" class="btn btn-primary">위치 전송</button><button id="simulateBtn" class="btn">위험 이동 체험</button></div>
+        <p class="hint">위험 이동 체험은 강남역 위험 구역으로 위치를 이동시킵니다.</p>
+      </section>
+
+      <section class="sos-section">
+        <button id="sosBtn" class="sos-button"><span>SOS</span><small>3초간 눌러 긴급 구조 요청</small><i id="sosProgress"></i></button>
+        <p>긴급 상황에서만 사용해 주세요. 현재 위치가 함께 전달됩니다.</p>
+      </section>
+      <button id="disconnectBtn" class="disconnect">서비스 연결 종료</button>
+    </div>
+  </main>
+
+  <div id="dangerModal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="warning-icon">!</div><span class="eyebrow">Danger Alert</span>
+      <h2>위험 지역에 진입했습니다</h2><p id="dangerAreaName">위험 구역</p>
+      <div class="guidance">주변을 확인하고 가능한 경우 안전한 지역으로 즉시 이동하세요.</div>
+      <button id="confirmDanger" class="btn btn-danger">경고 확인</button>
+    </div>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="/static/shared.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

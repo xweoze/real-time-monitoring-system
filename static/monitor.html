@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RTLS 관제센터</title>
+  <link rel="stylesheet" href="/static/common.css">
+  <link rel="stylesheet" href="/static/monitor.css">
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand"><div class="logo">R</div><div><b>RTLS</b><span>재난 안전 관제센터</span></div></div>
+      <div class="header-meta">
+        <span id="streamPill" class="pill"><i class="status-dot offline"></i> 연결 중</span>
+        <span id="clock" class="clock"></span>
+        <a class="app-link" href="/app" target="_blank">사용자 앱 열기</a>
+      </div>
+    </header>
+
+    <main>
+      <section class="summary">
+        <article><span>접속 사용자</span><strong id="onlineCount">0</strong><small>ONLINE</small></article>
+        <article><span>위험 감지</span><strong id="dangerCount">0</strong><small>DANGER</small></article>
+        <article class="critical"><span>미처리 SOS</span><strong id="sosCount">0</strong><small>PRIORITY</small></article>
+        <article><span>금일 이벤트</span><strong id="eventCount">0</strong><small>EVENTS</small></article>
+      </section>
+
+      <section class="workspace">
+        <div class="map-panel panel">
+          <div class="panel-head">
+            <div><span class="eyebrow">Live Situation Map</span><h1>실시간 상황 지도</h1></div>
+            <div class="legend"><span><i class="safe"></i>안전</span><span><i class="danger"></i>위험</span><span><i class="sos"></i>SOS</span></div>
+          </div>
+          <div id="map" class="map">
+            <div class="grid"></div>
+            <div class="road road-a"></div><div class="road road-b"></div><div class="river"></div>
+            <span class="district d1">서초구</span><span class="district d2">용산구</span><span class="district d3">강남구</span>
+            <div id="areas"></div><svg id="routeLayer" viewBox="0 0 1000 620" preserveAspectRatio="none"></svg><div id="markers"></div>
+            <div class="map-scale"><span></span> 2 km</div>
+          </div>
+        </div>
+
+        <aside class="side">
+          <section class="panel alert-panel">
+            <div class="panel-title"><div><span class="eyebrow">Priority Queue</span><h2>활성 알림</h2></div><span id="alertBadge" class="count-badge">0</span></div>
+            <div id="alerts" class="alert-list"><p class="empty">활성 알림이 없습니다.</p></div>
+          </section>
+          <section class="panel detail-panel">
+            <div class="panel-title"><div><span class="eyebrow">Client Detail</span><h2>사용자 상세</h2></div></div>
+            <div id="clientDetail"><p class="empty">지도에서 사용자를 선택하세요.</p></div>
+          </section>
+        </aside>
+      </section>
+
+      <section class="bottom-grid">
+        <section class="panel client-panel">
+          <div class="panel-title"><div><span class="eyebrow">Client Registry</span><h2>사용자 현황</h2></div><input id="search" placeholder="이름 또는 ID 검색"></div>
+          <div class="table-wrap"><table><thead><tr><th>사용자</th><th>접속</th><th>상태</th><th>최근 갱신</th></tr></thead><tbody id="clientsTable"></tbody></table></div>
+        </section>
+        <section class="panel timeline-panel">
+          <div class="panel-title"><div><span class="eyebrow">Event Stream</span><h2>이벤트 타임라인</h2></div></div>
+          <div id="timeline" class="timeline"><p class="empty">아직 이벤트가 없습니다.</p></div>
+        </section>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="/static/shared.js"></script>
+  <script src="/static/monitor.js"></script>
+</body>
+</html>
