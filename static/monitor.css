@@ -42,6 +42,7 @@ h2 { font-size:16px; }
 @keyframes pulseArea { 50% { box-shadow:0 0 35px rgba(255,93,108,.16); } }
 .marker { position:absolute; transform:translate(-50%,-50%); width:20px; height:20px; border:3px solid #e8fff8; border-radius:50%; background:var(--green); box-shadow:0 0 0 5px rgba(69,212,131,.16),0 5px 15px #000; cursor:pointer; z-index:5; }
 .marker.danger { background:var(--orange); box-shadow:0 0 0 5px rgba(255,184,77,.2); }
+.marker.offline { background:#66788b; border-color:#b6c1cc; box-shadow:0 0 0 5px rgba(102,120,139,.18); }
 .marker.sos { background:var(--red); box-shadow:0 0 0 7px rgba(255,93,108,.2); animation:sosPulse 1.4s infinite; }
 .marker::after { content:attr(data-label); position:absolute; top:23px; left:50%; transform:translateX(-50%); padding:4px 7px; border-radius:6px; background:#12243a; color:white; white-space:nowrap; font-size:10px; border:1px solid var(--line); }
 @keyframes sosPulse { 50% { box-shadow:0 0 0 15px rgba(255,93,108,0); } }
@@ -73,6 +74,7 @@ th { color:var(--muted); font-size:10px; font-weight:500; text-align:left; paddi
 td { padding:12px 20px; border-bottom:1px solid rgba(164,190,218,.07); }
 tbody tr { cursor:pointer; } tbody tr:hover { background:rgba(255,255,255,.025); }
 .state-text.danger { color:var(--orange); }.state-text.safe { color:var(--green); }
+.stale-text { color:var(--orange); font-size:9px; font-weight:800; }
 .timeline { max-height:260px; overflow:auto; padding:0 18px 15px; }
 .time-item { position:relative; padding:0 0 15px 22px; border-left:1px solid var(--line); }
 .time-item::before { content:""; position:absolute; left:-4px; top:3px; width:7px; height:7px; border-radius:50%; background:var(--blue); }

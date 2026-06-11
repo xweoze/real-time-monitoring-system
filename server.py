@@ -6,14 +6,17 @@ from __future__ import annotations
 import json
 import math
 import mimetypes
+import os
 import queue
 import re
+import sqlite3
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
 
@@ -21,10 +24,17 @@ ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
 HOST = "127.0.0.1"
 PORT = 8080
+DATA_DIR = ROOT / "data"
+DATABASE_PATH = Path(os.environ.get("RTLS_DATABASE", DATA_DIR / "rtls.db"))
+CLIENT_TIMEOUT_SECONDS = 45
 
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def parse_time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -36,9 +46,42 @@ def distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return radius * 2 * math.atan2(math.sqrt(value), math.sqrt(1 - value))
 
 
+class SQLiteStateRepository:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as connection:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY CHECK (id = 1), payload TEXT NOT NULL)"
+            )
+
+    def _connect(self) -> sqlite3.Connection:
+        return sqlite3.connect(self.path, timeout=5)
+
+    def load(self) -> Optional[dict]:
+        with self._connect() as connection:
+            row = connection.execute("SELECT payload FROM state WHERE id = 1").fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save(self, state: dict) -> None:
+        payload = json.dumps(state, ensure_ascii=False)
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO state (id, payload) VALUES (1, ?) "
+                "ON CONFLICT(id) DO UPDATE SET payload = excluded.payload",
+                (payload,),
+            )
+
+
 class MonitoringStore:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        repository: Optional[SQLiteStateRepository] = None,
+        client_timeout_seconds: int = CLIENT_TIMEOUT_SECONDS,
+    ) -> None:
         self.lock = threading.RLock()
+        self.repository = repository
+        self.client_timeout_seconds = client_timeout_seconds
         self.clients: dict[str, dict] = {}
         self.routes: dict[str, list[dict]] = {}
         self.sos_events: dict[str, dict] = {}
@@ -63,6 +106,34 @@ class MonitoringStore:
                 "severity": 4,
             },
         ]
+        self._restore()
+
+    def _restore(self) -> None:
+        if not self.repository:
+            return
+        state = self.repository.load()
+        if not state:
+            return
+        self.clients = state.get("clients", {})
+        self.routes = state.get("routes", {})
+        self.sos_events = state.get("sosEvents", {})
+        self.timeline = state.get("timeline", [])[:100]
+        self.sequence = int(state.get("sequence", 0))
+        for client in self.clients.values():
+            client["connectionStatus"] = "OFFLINE"
+
+    def _persist(self) -> None:
+        if not self.repository:
+            return
+        self.repository.save(
+            {
+                "clients": self.clients,
+                "routes": self.routes,
+                "sosEvents": self.sos_events,
+                "timeline": self.timeline,
+                "sequence": self.sequence,
+            }
+        )
 
     def _publish(self, event_type: str, data: dict) -> None:
         message = {"type": event_type, "data": data, "sentAt": now()}
@@ -104,11 +175,13 @@ class MonitoringStore:
                 "location": None,
                 "connectedAt": now(),
                 "updatedAt": now(),
+                "lastSeenAt": now(),
             }
             self.clients[client_id] = client
             self.routes[client_id] = []
             event = self._log("CONNECT", f"{client['name']} 접속", client_id)
             self._publish("state", {"event": event})
+            self._persist()
             return dict(client)
 
     def update_location(self, client_id: str, payload: dict) -> dict:
@@ -141,6 +214,7 @@ class MonitoringStore:
                     "dangerArea": dict(danger_area) if danger_area else None,
                     "connectionStatus": "ONLINE",
                     "updatedAt": now(),
+                    "lastSeenAt": now(),
                 }
             )
             self.routes[client_id].append(point)
@@ -159,6 +233,7 @@ class MonitoringStore:
             else:
                 event = None
             self._publish("state", {"event": event, "clientId": client_id})
+            self._persist()
             return dict(client)
 
     def create_sos(self, client_id: str, payload: dict) -> dict:
@@ -183,6 +258,7 @@ class MonitoringStore:
             self.sos_events[event_id] = event
             log = self._log("SOS", f"{client['name']} 긴급 구조 요청", client_id, "CRITICAL")
             self._publish("state", {"event": log, "sosId": event_id})
+            self._persist()
             return dict(event)
 
     def update_sos(self, event_id: str, status: str, operator: str) -> dict:
@@ -192,6 +268,14 @@ class MonitoringStore:
             event = self.sos_events.get(event_id)
             if not event:
                 raise KeyError("SOS 이벤트를 찾을 수 없습니다.")
+            allowed = {
+                "OPEN": {"ACKNOWLEDGED", "CANCELLED"},
+                "ACKNOWLEDGED": {"RESOLVED", "CANCELLED"},
+                "RESOLVED": set(),
+                "CANCELLED": set(),
+            }
+            if status not in allowed.get(event["status"], set()):
+                raise ValueError(f"{event['status']} 상태에서 {status}(으)로 변경할 수 없습니다.")
             event["status"] = status
             event["operator"] = operator[:30] or "관제 요원"
             if status == "ACKNOWLEDGED":
@@ -204,19 +288,35 @@ class MonitoringStore:
                 title = f"{event['id']} 요청 취소"
             log = self._log("RESCUE", title, event["clientId"])
             self._publish("state", {"event": log, "sosId": event_id})
+            self._persist()
             return dict(event)
+
+    def heartbeat(self, client_id: str) -> dict:
+        with self.lock:
+            client = self._require_client(client_id)
+            was_offline = client["connectionStatus"] == "OFFLINE"
+            client["connectionStatus"] = "ONLINE"
+            client["lastSeenAt"] = now()
+            if was_offline:
+                event = self._log("RECONNECT", f"{client['name']} 연결 복구", client_id)
+                self._publish("state", {"event": event, "clientId": client_id})
+                self._persist()
+            return dict(client)
 
     def disconnect(self, client_id: str) -> dict:
         with self.lock:
             client = self._require_client(client_id)
             client["connectionStatus"] = "OFFLINE"
             client["updatedAt"] = now()
+            client["lastSeenAt"] = now()
             event = self._log("DISCONNECT", f"{client['name']} 접속 종료", client_id)
             self._publish("state", {"event": event, "clientId": client_id})
+            self._persist()
             return dict(client)
 
     def snapshot(self) -> dict:
         with self.lock:
+            self._expire_stale_clients()
             return {
                 "clients": list(self.clients.values()),
                 "dangerAreas": self.danger_areas,
@@ -226,6 +326,23 @@ class MonitoringStore:
                 "timeline": self.timeline,
                 "serverTime": now(),
             }
+
+    def _expire_stale_clients(self) -> None:
+        deadline = datetime.now(timezone.utc) - timedelta(seconds=self.client_timeout_seconds)
+        changed = False
+        for client in self.clients.values():
+            last_seen = client.get("lastSeenAt") or client.get("updatedAt")
+            if (
+                client["connectionStatus"] == "ONLINE"
+                and last_seen
+                and parse_time(last_seen) < deadline
+            ):
+                client["connectionStatus"] = "OFFLINE"
+                event = self._log("TIMEOUT", f"{client['name']} 응답 시간 초과", client["id"], "WARNING")
+                self._publish("state", {"event": event, "clientId": client["id"]})
+                changed = True
+        if changed:
+            self._persist()
 
     def route(self, client_id: str) -> list[dict]:
         with self.lock:
@@ -250,7 +367,7 @@ class MonitoringStore:
         return client
 
 
-STORE = MonitoringStore()
+STORE = MonitoringStore(SQLiteStateRepository(DATABASE_PATH))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -282,13 +399,15 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._body()
             if path == "/api/clients":
                 return self._json({"client": STORE.register(payload)}, HTTPStatus.CREATED)
-            match = re.fullmatch(r"/api/clients/([^/]+)/(location|sos|disconnect)", path)
+            match = re.fullmatch(r"/api/clients/([^/]+)/(location|sos|heartbeat|disconnect)", path)
             if match:
                 client_id, action = match.groups()
                 if action == "location":
                     return self._json({"client": STORE.update_location(client_id, payload)})
                 if action == "sos":
                     return self._json({"sos": STORE.create_sos(client_id, payload)}, HTTPStatus.CREATED)
+                if action == "heartbeat":
+                    return self._json({"client": STORE.heartbeat(client_id)})
                 return self._json({"client": STORE.disconnect(client_id)})
             match = re.fullmatch(r"/api/sos/([^/]+)", path)
             if match:
@@ -308,7 +427,10 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("요청 데이터가 너무 큽니다.")
         if not length:
             return {}
-        return json.loads(self.rfile.read(length).decode("utf-8"))
+        payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("JSON 객체 형식의 요청이 필요합니다.")
+        return payload
 
     def _json(self, data: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")

@@ -13,6 +13,10 @@ const project = (lat, lng) => ({
   y: (1 - (lat - bounds.minLat) / (bounds.maxLat - bounds.minLat)) * 100,
 });
 const hasOpenSos = id => snapshot.sosEvents.some(event => event.clientId === id && ["OPEN", "ACKNOWLEDGED"].includes(event.status));
+const isLocationStale = client => {
+  if (!client.location?.capturedAt) return false;
+  return Date.now() - new Date(client.location.capturedAt).getTime() > 60000;
+};
 
 async function refresh() {
   try {
@@ -47,7 +51,11 @@ function renderMap() {
   }).join("");
   document.querySelector("#markers").innerHTML = snapshot.clients.filter(c => c.location).map(client => {
     const p = project(client.location.lat, client.location.lng);
-    const state = hasOpenSos(client.id) ? "sos" : client.dangerState === "DANGER" ? "danger" : "";
+    const state = hasOpenSos(client.id)
+      ? "sos"
+      : client.connectionStatus === "OFFLINE" || isLocationStale(client)
+        ? "offline"
+        : client.dangerState === "DANGER" ? "danger" : "";
     return `<button class="marker ${state}" style="left:${p.x}%;top:${p.y}%" data-id="${client.id}" data-label="${escapeHtml(client.name)}" aria-label="${escapeHtml(client.name)}"></button>`;
   }).join("");
   document.querySelectorAll(".marker").forEach(marker => marker.onclick = () => selectClient(marker.dataset.id));
@@ -86,6 +94,8 @@ function renderDetail() {
       <div><label>최근 갱신</label><strong>${ago(client.updatedAt)}</strong></div>
       <div><label>위도</label><strong>${client.location?.lat?.toFixed(5) || "-"}</strong></div>
       <div><label>경도</label><strong>${client.location?.lng?.toFixed(5) || "-"}</strong></div>
+      <div><label>위치 정확도</label><strong>${client.location ? `${Math.round(client.location.accuracy || 0)} m` : "-"}</strong></div>
+      <div><label>위치 신선도</label><strong class="${isLocationStale(client) ? "stale-text" : ""}">${client.location ? (isLocationStale(client) ? "STALE" : "CURRENT") : "-"}</strong></div>
     </div>
     <div class="detail-actions">
       <button class="btn" id="routeBtn">이동 경로</button>
@@ -104,7 +114,7 @@ function renderTable() {
   document.querySelector("#clientsTable").innerHTML = clients.map(client => `
     <tr data-id="${client.id}">
       <td><b>${escapeHtml(client.name)}</b><br><span class="muted">${client.id}</span></td>
-      <td>${client.connectionStatus}</td>
+      <td>${client.connectionStatus}${isLocationStale(client) ? `<br><span class="stale-text">STALE LOCATION</span>` : ""}</td>
       <td><b class="state-text ${client.dangerState.toLowerCase()}">${client.dangerState}</b></td>
       <td>${ago(client.updatedAt)}</td>
     </tr>`).join("") || `<tr><td colspan="4" class="empty">사용자가 없습니다.</td></tr>`;
@@ -142,4 +152,5 @@ const events = new EventSource("/api/events");
 events.addEventListener("connected", () => setStreamConnected(true));
 events.addEventListener("update", refresh);
 events.onerror = () => setStreamConnected(false);
+setInterval(refresh, 10000);
 refresh();

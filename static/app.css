@@ -11,6 +11,8 @@ h1 { margin:4px 0 0; font-size:19px; } h2,h3 { margin:7px 0; }
 .setup h2 { margin-top:10px; font-size:23px; }.setup p { color:var(--muted); font-size:13px; line-height:1.7; }
 .setup label { display:block; color:var(--muted); font-size:11px; margin:22px 0 12px; }
 .setup input,.coordinates input { display:block; width:100%; margin-top:7px; border:1px solid var(--line); border-radius:10px; padding:13px; background:#0a1727; color:white; outline:0; }
+.setup .consent { display:flex; align-items:flex-start; gap:9px; margin:14px 0; line-height:1.5; }
+.setup .consent input { flex:0 0 auto; width:16px; height:16px; margin:0; padding:0; accent-color:var(--cyan); }
 .setup .btn { width:100%; padding:14px; }
 .hero { position:relative; text-align:center; padding:25px 15px 28px; border-radius:24px; overflow:hidden; margin-bottom:14px; border:1px solid rgba(69,212,131,.18); background:linear-gradient(160deg,rgba(69,212,131,.10),rgba(16,31,51,.8)); }
 .hero.danger { border-color:rgba(255,93,108,.3); background:linear-gradient(160deg,rgba(255,93,108,.16),rgba(16,31,51,.9)); }
@@ -27,6 +29,8 @@ h1 { margin:4px 0 0; font-size:19px; } h2,h3 { margin:7px 0; }
 .coordinates { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:15px 0 12px; }
 .coordinates label { color:var(--muted); font-size:10px; }.coordinates input { padding:10px; font-size:12px; }
 .location-actions { display:flex; gap:9px; }.location-actions .btn { flex:1; font-size:11px; }
+.auto-share { display:flex; align-items:center; gap:8px; margin-top:13px; color:var(--muted); font-size:11px; }
+.auto-share input { width:16px; height:16px; accent-color:var(--cyan); }
 .hint { margin:10px 0 0; color:#6f859b; font-size:9px; text-align:center; }
 .sos-section { text-align:center; padding:25px 10px 10px; }
 .sos-button { position:relative; width:172px; height:172px; border-radius:50%; background:radial-gradient(circle at 40% 35%,#ff7180,#cc263c 70%); color:white; border:7px solid #351b29; box-shadow:0 0 0 1px rgba(255,93,108,.5),0 20px 50px rgba(255,45,73,.22); overflow:hidden; user-select:none; touch-action:none; }

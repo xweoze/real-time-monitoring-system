@@ -3,8 +3,12 @@ let lastDanger = false;
 let holdTimer = null;
 let holdStarted = 0;
 let holdFrame = null;
+let locationWatchId = null;
+let heartbeatTimer = null;
 
 function clearClient() {
+  stopAutoShare();
+  stopHeartbeat();
   client = null;
   lastDanger = false;
   sessionStorage.removeItem("rtls-client");
@@ -21,11 +25,15 @@ function setConnected(connected) {
 async function connect() {
   const name = document.querySelector("#nameInput").value.trim();
   if (!name) return toast("사용자 이름을 입력해 주세요.");
+  if (!document.querySelector("#locationConsent").checked) {
+    return toast("위치 정보 공유에 동의해 주세요.");
+  }
   try {
     const data = await api("/api/clients", { method: "POST", body: JSON.stringify({ name, deviceId: `web-${Date.now()}` }) });
     client = data.client;
     sessionStorage.setItem("rtls-client", JSON.stringify(client));
     setConnected(true);
+    startHeartbeat();
     renderClient();
     await locate();
     toast("관제센터에 연결되었습니다.");
@@ -41,7 +49,7 @@ async function locate() {
   }, () => toast("위치 권한이 없어 입력된 좌표를 사용합니다."), { enableHighAccuracy: true, timeout: 7000 });
 }
 
-async function sendLocation(accuracy = 5) {
+async function sendLocation(accuracy = 5, quiet = false) {
   if (!client) return;
   try {
     const body = {
@@ -57,7 +65,7 @@ async function sendLocation(accuracy = 5) {
     renderClient();
     if (client.dangerState === "DANGER" && !lastDanger) showDanger();
     lastDanger = client.dangerState === "DANGER";
-    toast("현재 위치를 전송했습니다.");
+    if (!quiet) toast("현재 위치를 전송했습니다.");
   } catch (error) {
     if (error.status === 404) {
       clearClient();
@@ -65,6 +73,56 @@ async function sendLocation(accuracy = 5) {
     }
     toast(error.message);
   }
+}
+
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatTimer = setInterval(async () => {
+    if (!client) return;
+    try {
+      const data = await api(`/api/clients/${client.id}/heartbeat`, {
+        method: "POST",
+        body: "{}",
+      });
+      client = data.client;
+      sessionStorage.setItem("rtls-client", JSON.stringify(client));
+    } catch (error) {
+      if (error.status === 404) {
+        clearClient();
+        toast("서버 연결이 초기화되었습니다. 다시 연결해 주세요.");
+      }
+    }
+  }, 15000);
+}
+
+function stopHeartbeat() {
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+}
+
+function startAutoShare() {
+  if (!client || !navigator.geolocation) {
+    document.querySelector("#autoShare").checked = false;
+    return toast("이 브라우저에서는 자동 위치 공유를 사용할 수 없습니다.");
+  }
+  if (locationWatchId !== null) return;
+  locationWatchId = navigator.geolocation.watchPosition(position => {
+    document.querySelector("#latInput").value = position.coords.latitude.toFixed(5);
+    document.querySelector("#lngInput").value = position.coords.longitude.toFixed(5);
+    sendLocation(position.coords.accuracy, true);
+  }, () => {
+    stopAutoShare();
+    document.querySelector("#autoShare").checked = false;
+    toast("위치 권한이 없어 자동 공유를 중지했습니다.");
+  }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 });
+  toast("자동 위치 공유를 시작했습니다.");
+}
+
+function stopAutoShare() {
+  if (locationWatchId !== null && navigator.geolocation) {
+    navigator.geolocation.clearWatch(locationWatchId);
+  }
+  locationWatchId = null;
 }
 
 function renderClient() {
@@ -134,6 +192,13 @@ document.querySelector("#simulateBtn").onclick = () => {
 };
 document.querySelector("#confirmDanger").onclick = () => document.querySelector("#dangerModal").hidden = true;
 document.querySelector("#disconnectBtn").onclick = disconnect;
+document.querySelector("#autoShare").onchange = event => {
+  if (event.target.checked) startAutoShare();
+  else {
+    stopAutoShare();
+    toast("자동 위치 공유를 중지했습니다.");
+  }
+};
 const sosButton = document.querySelector("#sosBtn");
 sosButton.addEventListener("pointerdown", startHold);
 ["pointerup", "pointerleave", "pointercancel"].forEach(name => sosButton.addEventListener(name, cancelHold));
@@ -149,6 +214,7 @@ async function restoreSession() {
     client = current;
     lastDanger = current.dangerState === "DANGER";
     setConnected(true);
+    startHeartbeat();
     renderClient();
   } catch (_) {
     clearClient();
