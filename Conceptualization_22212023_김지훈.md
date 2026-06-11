@@ -45,6 +45,13 @@
 <td>웹 기반 통신 구조, 자료구조 및 알고리즘 보완</td>
 <td>김지훈</td>
 </tr>
+
+<tr align="center">
+<td>2026-06-11</td>
+<td>1.10</td>
+<td>이해관계자, 개인정보 및 운영 범위 보완</td>
+<td>김지훈</td>
+</tr>
 </table>
 
 
@@ -66,8 +73,9 @@
 4. Concept of Operation  
 5. Problem Statement  
 6. Data Structure and Algorithm Strategy
-7. Glossary
-8. References
+7. Benchmark and Differentiation
+8. Glossary
+9. References
 
 ---
 
@@ -143,6 +151,26 @@
 - 구조 요청(SOS) 기능 제공  
 - 클라이언트 / 서버 / 관제 시스템 구현  
 - 재난 대응 속도 향상
+
+### 1.4 Stakeholders
+
+| Stakeholder | Interest and Responsibility |
+|---|---|
+| Client User | 위치 공유 여부를 선택하고 위험 경고 및 SOS 기능을 사용 |
+| Guardian | 사용자 동의를 전제로 안전 상태와 대응 결과를 확인 |
+| Monitoring Operator | 위험 및 SOS 이벤트를 확인하고 구조 지원 절차 수행 |
+| System Administrator | 서버, 계정, 보안, 데이터 보존과 장애 복구 관리 |
+| Rescue Organization | 운영 기관과 사전 협의된 경우에만 구조 정보를 전달받음 |
+
+### 1.5 Assumptions and Constraints
+
+- 현재 구현은 교육 및 시연 목적의 로컬 MVP이다.
+- SOS 요청은 관제 대시보드에 전달되며 실제 119 신고를 자동 수행하지 않는다.
+- 사용자는 위치 수집 목적과 보존 범위를 안내받고 위치 공유에 동의해야 한다.
+- 사용자는 언제든 위치 공유를 종료할 수 있어야 한다.
+- 서버 재시작 시 데이터가 초기화되며 운영 환경에서는 영구 저장소가 필요하다.
+- 현재 지도는 시연용 좌표 화면이며 실제 GIS 지도와 도로 정보를 제공하지 않는다.
+- 다수 사용자 처리 성능은 부하 테스트 전까지 목표값으로만 관리한다.
 
 ---
 ## 2. System context diagram
@@ -244,8 +272,8 @@ flowchart LR
 ### 4.1. System Connect
 | Purpose | 사용자가 시스템에 접속 |
 |--------|----------------------|
-| Approach | 사용자가 프로그램에 접속하면 서버로부터 고유 ID를 부여받고 시스템과 연결된다. |
-| Dynamics | 사용자가 시스템에 처음 접속하는 경우 |
+| Approach | 사용자가 웹 앱에서 이름을 입력하고 연결 버튼을 누르면 서버로부터 고유 ID를 부여받는다. |
+| Dynamics | 사용자가 안전 서비스를 시작하는 경우 |
 | Goals | 사용자가 시스템을 사용할 수 있도록 연결 상태를 유지한다. |
 
 ---
@@ -349,7 +377,7 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 
 ### 5.2.2. Problem#2 실시간 통신 처리
 
-사용자와 서버는 지속적으로 데이터를 주고받기 때문에 실시간 처리 구조가 필요하다.
+사용자 앱의 위치·SOS 요청과 관제 화면의 상태 갱신을 빠르게 처리하기 위해 실시간 처리 구조가 필요하다.
 
 이를 해결하기 위해 멀티스레드 HTTP 서버와 SSE(Server-Sent Events)를 적용한다.
 
@@ -407,11 +435,38 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 
 클라이언트의 위치와 상태 정보는 항상 최신 상태로 유지되어야 한다.
 
-- 클라이언트는 일정 주기로 위치 데이터를 서버에 전송한다.  
+- 현재 MVP에서 클라이언트는 사용자의 위치 전송 동작 또는 위치 조회 성공 시 데이터를 서버에 전송한다.
+- 운영 버전에서는 사용자 동의와 배터리 정책에 따라 위치를 일정 주기로 전송할 수 있다.
 - 서버는 해당 정보를 관제자에게 실시간으로 전달한다.
 - 데이터 지연 및 손실을 최소화하는 구조를 유지한다.  
 
 이를 통해 정확한 모니터링이 가능하다.
+
+---
+
+### 5.2.7. Problem#7 개인정보 및 접근 통제
+
+위치 정보는 개인의 이동과 생활 패턴을 나타내는 민감정보이므로 기능 구현만으로 충분하지 않다.
+
+- 위치 수집 목적과 보존 기간을 사용자에게 안내한다.
+- 사용자의 명시적 동의를 받고 언제든 공유를 중단할 수 있게 한다.
+- 관제자는 인증과 권한 확인 후 필요한 사용자 정보만 조회한다.
+- 위치 조회와 SOS 처리 이력을 감사 로그로 남긴다.
+- 보존 기간이 끝난 위치 정보는 복구할 수 없도록 파기한다.
+
+현재 MVP에는 운영자 인증, 영구 감사 로그와 데이터 파기 기능이 없으며 실제 배포 전에 구현해야 한다.
+
+---
+
+### 5.2.8. Problem#8 운영 장애와 구조기관 연계
+
+재난 상황에서는 서버 장애, 네트워크 단절 또는 위치 오차가 발생할 수 있다.
+
+- 서버 장애 시 데이터를 복구할 수 있는 영구 저장소와 백업이 필요하다.
+- 오래된 위치와 최신 위치를 명확히 구분하여 잘못된 구조 판단을 방지한다.
+- 위치 정확도와 마지막 갱신 시간을 관제 화면에 표시한다.
+- 실제 구조기관 연계 시 전달 성공 여부와 실패 시 대체 연락 절차를 정의한다.
+- 시스템 경고는 구조기관의 공식 판단을 대신하지 않는다는 운영 원칙을 둔다.
 
 ---
 
@@ -443,7 +498,18 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 
 위험 지역이 대규모로 증가하면 모든 지역을 순차 비교하는 대신 R-tree, Quadtree 또는 Geohash 기반 공간 인덱스를 적용하여 후보 지역을 먼저 줄일 수 있다.
 
-# 7. Glossary
+# 7. Benchmark and Differentiation
+
+| System | Strong Points | Implication for This Project |
+|---|---|---|
+| Traccar | 실제 지도, 다양한 GPS 장치, 지오펜스, 경로와 보고서 | 실제 지도와 장치 연동, 경로 보고서 기능을 향후 확장 |
+| Life360 | 쉬운 모바일 UX, 장소 알림, 위치 이력, 충돌 감지와 긴급 지원 | 사용자 동의, 위치 공유 제어와 모바일 알림 경험 보완 |
+| RapidSOS | 공공 긴급대응 기관 연계, GIS, 현장 데이터와 사고 검증 | 구조기관 연계는 API뿐 아니라 기관 협약과 검증 절차가 필요 |
+| Sahana Eden | 기관, 인력, 대피소, 물자와 지도를 통합한 재난 운영 | 장기적으로 사용자 위치를 넘어 재난 자원 관리와 연계 가능 |
+
+본 프로젝트는 상용 서비스와 달리 **재난 취약계층의 위험 지역 진입 감지, 관제 확인, SOS 처리 흐름을 하나의 학습용 MVP로 구현**한다는 데 의미가 있다. 반면 실제 지도, 모바일 백그라운드 동작, 인증, 영구 저장, 공공기관 연계와 검증된 대규모 성능은 아직 제공하지 않는다.
+
+# 8. Glossary
 
 | Term | Description |
 |------|-------------|
@@ -459,10 +525,14 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 | Danger Area | 중심 좌표, 반경과 심각도로 정의되는 위험 지역 |
 | SOS | 사용자가 관제자에게 보내는 긴급 구조 요청 |
 
-# 8. References
+# 9. References
 
 - 본 보고서의 모든 그림은 직접 제작함 (Created by author)
 - GitHub Repository : https://github.com/xweoze/real-time-monitoring-system
 - Python HTTP Server Documentation
 - MDN Web Docs - Server-Sent Events
 - JSON Data Interchange Format
+- Traccar Official Website: https://www.traccar.org/
+- Life360 Official Website: https://www.life360.com/
+- RapidSOS Official Website: https://rapidsos.com/
+- Sahana Eden Official Website: https://sahanafoundation.org/products/eden/
