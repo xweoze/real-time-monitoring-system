@@ -12,8 +12,11 @@
     <header>
       <div class="brand"><div class="logo">R</div><div><b>RTLS</b><span>재난 안전 관제센터</span></div></div>
       <div class="header-meta">
+        <select id="regionFilter" title="관제 지역" hidden><option value="">전국 관제</option></select>
         <span id="streamPill" class="pill"><i class="status-dot offline"></i> 연결 중</span>
         <span id="clock" class="clock"></span>
+        <span id="operatorName" class="operator-name"></span>
+        <button id="logoutBtn" class="app-link text-button">로그아웃</button>
         <a class="app-link" href="/app" target="_blank">사용자 앱 열기</a>
       </div>
     </header>
@@ -29,15 +32,15 @@
       <section class="workspace">
         <div class="map-panel panel">
           <div class="panel-head">
-            <div><span class="eyebrow">Live Situation Map</span><h1>실시간 상황 지도</h1></div>
+            <div><span class="eyebrow">National Situation Map</span><h1 id="mapTitle">대한민국 통합 관제 지도</h1></div>
             <div class="legend"><span><i class="safe"></i>안전</span><span><i class="danger"></i>위험</span><span><i class="sos"></i>SOS</span></div>
           </div>
           <div id="map" class="map">
             <div class="grid"></div>
-            <div class="road road-a"></div><div class="road road-b"></div><div class="river"></div>
-            <span class="district d1">서초구</span><span class="district d2">용산구</span><span class="district d3">강남구</span>
-            <div id="areas"></div><svg id="routeLayer" viewBox="0 0 1000 620" preserveAspectRatio="none"></svg><div id="markers"></div>
-            <div class="map-scale"><span></span> 2 km</div>
+            <svg id="geographyLayer" class="korea-shape" viewBox="0 0 1000 620" preserveAspectRatio="none" aria-hidden="true"></svg>
+            <div id="regionMarkers"></div><div id="areas"></div>
+            <svg id="routeLayer" viewBox="0 0 1000 620" preserveAspectRatio="none"></svg><div id="markers"></div>
+            <div class="map-scale"><span></span> 전국 17개 시·도 연동</div>
           </div>
         </div>
 
@@ -63,7 +66,30 @@
           <div id="timeline" class="timeline"><p class="empty">아직 이벤트가 없습니다.</p></div>
         </section>
       </section>
+
+      <section id="operatorPanel" class="panel operator-panel" hidden>
+        <div class="panel-title"><div><span class="eyebrow">Regional Accounts</span><h2>지역 관제 관리자</h2></div></div>
+        <form id="operatorForm">
+          <input id="operatorUsername" placeholder="관리자 아이디" required>
+          <input id="operatorPassword" type="password" placeholder="비밀번호 8자 이상" required>
+          <input id="operatorDisplayName" placeholder="표시 이름" required>
+          <select id="operatorRegion"></select>
+          <button class="btn btn-primary">지역 관리자 생성</button>
+        </form>
+        <div id="operatorList" class="operator-list"></div>
+      </section>
     </main>
+  </div>
+  <div id="authOverlay" class="auth-overlay">
+    <form id="monitorLogin" class="panel auth-card">
+      <span class="eyebrow">Control Center Access</span>
+      <h1>관제센터 로그인</h1>
+      <p>전국 관리자 또는 지역 관제 관리자 계정으로 로그인하세요.</p>
+      <label>아이디<input id="loginUsername" autocomplete="username" value="national_admin"></label>
+      <label>비밀번호<input id="loginPassword" type="password" autocomplete="current-password" value="admin1234"></label>
+      <button class="btn btn-primary">로그인</button>
+      <small>초기 전국 관리자: national_admin / admin1234</small>
+    </form>
   </div>
   <div id="toast" class="toast"></div>
   <script src="/static/shared.js"></script>

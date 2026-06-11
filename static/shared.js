@@ -1,7 +1,34 @@
+const AUTH_TOKEN_KEY = "rtls-auth-token";
+const AUTH_USER_KEY = "rtls-auth-user";
+
+const authSession = {
+  token: localStorage.getItem(AUTH_TOKEN_KEY) || "",
+  user: JSON.parse(localStorage.getItem(AUTH_USER_KEY) || "null"),
+  save(data) {
+    this.token = data.token;
+    this.user = data.user;
+    localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(data.user));
+  },
+  clear() {
+    this.token = "";
+    this.user = null;
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    localStorage.removeItem(AUTH_USER_KEY);
+  },
+};
+
 const api = async (url, options = {}) => {
+  const authHeader = authSession.token
+    ? { Authorization: `Bearer ${authSession.token}` }
+    : {};
   const response = await fetch(url, {
     ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeader,
+      ...(options.headers || {}),
+    },
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -10,6 +37,25 @@ const api = async (url, options = {}) => {
     throw error;
   }
   return data;
+};
+
+const loadRegions = async selectElements => {
+  const data = await api("/api/regions");
+  const options = data.regions
+    .map(region => `<option value="${region.id}">${escapeHtml(region.name)}</option>`)
+    .join("");
+  selectElements.forEach(element => {
+    element.innerHTML = options;
+  });
+  return data.regions;
+};
+
+const logoutSession = async () => {
+  try {
+    await api("/api/auth/logout", { method: "POST", body: "{}" });
+  } finally {
+    authSession.clear();
+  }
 };
 
 const ago = value => {

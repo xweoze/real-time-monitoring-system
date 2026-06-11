@@ -1,0 +1,236 @@
+"""SQLite-backed accounts and bearer-token sessions."""
+
+import hashlib
+import hmac
+import os
+import re
+import secrets
+import sqlite3
+import uuid
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Optional
+
+from regions import REGION_BY_ID
+
+
+class AuthenticationError(Exception):
+    pass
+
+
+class AuthorizationError(Exception):
+    pass
+
+
+class AuthRepository:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as connection:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    salt TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    region_id TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
+        self._ensure_default_admin()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=5)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    @staticmethod
+    def _now() -> str:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    @staticmethod
+    def _hash_password(password: str, salt: str) -> str:
+        return hashlib.pbkdf2_hmac(
+            "sha256", password.encode("utf-8"), bytes.fromhex(salt), 200_000
+        ).hex()
+
+    @staticmethod
+    def _public_user(row: sqlite3.Row) -> dict:
+        return {
+            "id": row["id"],
+            "username": row["username"],
+            "displayName": row["display_name"],
+            "role": row["role"],
+            "regionId": row["region_id"],
+            "createdAt": row["created_at"],
+        }
+
+    def _insert_user(
+        self,
+        username: str,
+        password: str,
+        display_name: str,
+        role: str,
+        region_id: Optional[str],
+    ) -> dict:
+        salt = os.urandom(16).hex()
+        user_id = "U-" + uuid.uuid4().hex[:10]
+        created_at = self._now()
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO users (
+                        id, username, password_hash, salt, display_name, role,
+                        region_id, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user_id,
+                        username,
+                        self._hash_password(password, salt),
+                        salt,
+                        display_name,
+                        role,
+                        region_id,
+                        created_at,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("이미 사용 중인 아이디입니다.") from exc
+        return {
+            "id": user_id,
+            "username": username,
+            "displayName": display_name,
+            "role": role,
+            "regionId": region_id,
+            "createdAt": created_at,
+        }
+
+    def _ensure_default_admin(self) -> None:
+        with self._connect() as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM users WHERE username = ?", ("national_admin",)
+            ).fetchone()
+        if not exists:
+            self._insert_user(
+                "national_admin",
+                "admin1234",
+                "전국 관제 관리자",
+                "NATIONAL_ADMIN",
+                None,
+            )
+
+    def create_user(
+        self,
+        username: str,
+        password: str,
+        display_name: str,
+        region_id: str,
+        role: str = "USER",
+    ) -> dict:
+        username = str(username or "").strip()
+        password = str(password or "")
+        display_name = str(display_name or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{4,30}", username):
+            raise ValueError("아이디는 영문, 숫자, _, -, . 조합 4~30자로 입력해 주세요.")
+        if len(password) < 8:
+            raise ValueError("비밀번호는 8자 이상이어야 합니다.")
+        if not display_name or len(display_name) > 30:
+            raise ValueError("표시 이름은 1~30자로 입력해 주세요.")
+        if role not in {"USER", "REGIONAL_OPERATOR"}:
+            raise ValueError("지원하지 않는 계정 역할입니다.")
+        if region_id not in REGION_BY_ID:
+            raise ValueError("유효한 지역을 선택해 주세요.")
+        return self._insert_user(username, password, display_name, role, region_id)
+
+    def login(self, username: str, password: str) -> dict:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM users WHERE username = ?",
+                (str(username or "").strip(),),
+            ).fetchone()
+            if not row:
+                raise AuthenticationError("아이디 또는 비밀번호가 올바르지 않습니다.")
+            actual = self._hash_password(str(password or ""), row["salt"])
+            if not hmac.compare_digest(actual, row["password_hash"]):
+                raise AuthenticationError("아이디 또는 비밀번호가 올바르지 않습니다.")
+
+            token = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            created_at = datetime.now(timezone.utc)
+            expires_at = created_at + timedelta(hours=12)
+            connection.execute(
+                """
+                INSERT INTO sessions (token_hash, user_id, created_at, expires_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    token_hash,
+                    row["id"],
+                    created_at.isoformat(timespec="seconds"),
+                    expires_at.isoformat(timespec="seconds"),
+                ),
+            )
+        return {
+            "token": token,
+            "expiresAt": expires_at.isoformat(timespec="seconds"),
+            "user": self._public_user(row),
+        }
+
+    def authenticate(self, token: str) -> dict:
+        if not token:
+            raise AuthenticationError("로그인이 필요합니다.")
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM sessions WHERE expires_at <= ?", (self._now(),)
+            )
+            row = connection.execute(
+                """
+                SELECT users.*
+                FROM sessions
+                JOIN users ON users.id = sessions.user_id
+                WHERE sessions.token_hash = ?
+                """,
+                (token_hash,),
+            ).fetchone()
+        if not row:
+            raise AuthenticationError("로그인 세션이 만료되었거나 유효하지 않습니다.")
+        return self._public_user(row)
+
+    def logout(self, token: str) -> None:
+        if not token:
+            return
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM sessions WHERE token_hash = ?", (token_hash,)
+            )
+
+    def list_operators(self) -> list[dict]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM users
+                WHERE role = 'REGIONAL_OPERATOR'
+                ORDER BY region_id, display_name
+                """
+            ).fetchall()
+        return [self._public_user(row) for row in rows]

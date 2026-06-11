@@ -9,8 +9,10 @@ import mimetypes
 import os
 import queue
 import re
+import socket
 import sqlite3
 import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
@@ -19,14 +21,18 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
+from auth import AuthRepository, AuthenticationError, AuthorizationError
+from regions import REGIONS, REGION_BY_ID
+
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
-HOST = "127.0.0.1"
+HOST = os.environ.get("RTLS_HOST", "0.0.0.0")
 PORT = 8080
 DATA_DIR = ROOT / "data"
 DATABASE_PATH = Path(os.environ.get("RTLS_DATABASE", DATA_DIR / "rtls.db"))
 CLIENT_TIMEOUT_SECONDS = 45
+PERSIST_DEBOUNCE_SECONDS = 3.0
 
 
 def now() -> str:
@@ -78,20 +84,30 @@ class MonitoringStore:
         self,
         repository: Optional[SQLiteStateRepository] = None,
         client_timeout_seconds: int = CLIENT_TIMEOUT_SECONDS,
+        persist_debounce_seconds: float = PERSIST_DEBOUNCE_SECONDS,
     ) -> None:
         self.lock = threading.RLock()
         self.repository = repository
         self.client_timeout_seconds = client_timeout_seconds
+        self.persist_debounce_seconds = persist_debounce_seconds
         self.clients: dict[str, dict] = {}
+        self.clients_by_region: dict[str, set[str]] = {
+            region["id"]: set() for region in REGIONS
+        }
+        self.client_by_user: dict[str, str] = {}
         self.routes: dict[str, list[dict]] = {}
         self.sos_events: dict[str, dict] = {}
         self.timeline: list[dict] = []
         self.subscribers: list[queue.Queue] = []
         self.sequence = 0
+        self._persist_timer: Optional[threading.Timer] = None
+        self._last_persist_at = 0.0
+        self._dirty = False
         self.danger_areas = [
             {
                 "id": "AREA-01",
                 "name": "강남역 침수 위험 구역",
+                "regionId": "KR-11",
                 "lat": 37.4979,
                 "lng": 127.0276,
                 "radius": 320,
@@ -100,6 +116,7 @@ class MonitoringStore:
             {
                 "id": "AREA-02",
                 "name": "한강 범람 주의 구역",
+                "regionId": "KR-11",
                 "lat": 37.5208,
                 "lng": 126.9931,
                 "radius": 420,
@@ -121,19 +138,57 @@ class MonitoringStore:
         self.sequence = int(state.get("sequence", 0))
         for client in self.clients.values():
             client["connectionStatus"] = "OFFLINE"
+            client.setdefault("regionId", "KR-11")
+            client.setdefault("userId", None)
+        self._rebuild_indexes()
 
-    def _persist(self) -> None:
+    def _state_payload(self) -> dict:
+        return {
+            "clients": self.clients,
+            "routes": self.routes,
+            "sosEvents": self.sos_events,
+            "timeline": self.timeline,
+            "sequence": self.sequence,
+        }
+
+    def _persist(self, force: bool = False) -> None:
         if not self.repository:
             return
-        self.repository.save(
-            {
-                "clients": self.clients,
-                "routes": self.routes,
-                "sosEvents": self.sos_events,
-                "timeline": self.timeline,
-                "sequence": self.sequence,
-            }
-        )
+        elapsed = time.monotonic() - self._last_persist_at
+        if force or elapsed >= self.persist_debounce_seconds:
+            if self._persist_timer:
+                self._persist_timer.cancel()
+                self._persist_timer = None
+            self.repository.save(self._state_payload())
+            self._last_persist_at = time.monotonic()
+            self._dirty = False
+            return
+
+        self._dirty = True
+        if self._persist_timer:
+            return
+        delay = max(0.01, self.persist_debounce_seconds - elapsed)
+        self._persist_timer = threading.Timer(delay, self.flush)
+        self._persist_timer.daemon = True
+        self._persist_timer.start()
+
+    def flush(self) -> None:
+        with self.lock:
+            if self._persist_timer:
+                self._persist_timer.cancel()
+            self._persist_timer = None
+            if self._dirty:
+                self._persist(force=True)
+
+    def _rebuild_indexes(self) -> None:
+        for client_ids in self.clients_by_region.values():
+            client_ids.clear()
+        self.client_by_user.clear()
+        for client_id, client in self.clients.items():
+            region_id = client.get("regionId", "KR-11")
+            self.clients_by_region.setdefault(region_id, set()).add(client_id)
+            if client.get("userId"):
+                self.client_by_user[client["userId"]] = client_id
 
     def _publish(self, event_type: str, data: dict) -> None:
         message = {"type": event_type, "data": data, "sentAt": now()}
@@ -168,6 +223,12 @@ class MonitoringStore:
                 "id": client_id,
                 "name": str(payload.get("name") or f"사용자 {self.sequence}")[:30],
                 "deviceId": str(payload.get("deviceId") or uuid.uuid4().hex[:12])[:40],
+                "userId": payload.get("userId"),
+                "regionId": (
+                    payload.get("regionId")
+                    if payload.get("regionId") in REGION_BY_ID
+                    else "KR-11"
+                ),
                 "connectionStatus": "ONLINE",
                 "state": "NORMAL",
                 "dangerState": "SAFE",
@@ -178,10 +239,13 @@ class MonitoringStore:
                 "lastSeenAt": now(),
             }
             self.clients[client_id] = client
+            self.clients_by_region[client["regionId"]].add(client_id)
+            if client.get("userId"):
+                self.client_by_user[client["userId"]] = client_id
             self.routes[client_id] = []
             event = self._log("CONNECT", f"{client['name']} 접속", client_id)
             self._publish("state", {"event": event})
-            self._persist()
+            self._persist(force=True)
             return dict(client)
 
     def update_location(self, client_id: str, payload: dict) -> dict:
@@ -233,7 +297,7 @@ class MonitoringStore:
             else:
                 event = None
             self._publish("state", {"event": event, "clientId": client_id})
-            self._persist()
+            self._persist(force=event is not None)
             return dict(client)
 
     def create_sos(self, client_id: str, payload: dict) -> dict:
@@ -258,7 +322,7 @@ class MonitoringStore:
             self.sos_events[event_id] = event
             log = self._log("SOS", f"{client['name']} 긴급 구조 요청", client_id, "CRITICAL")
             self._publish("state", {"event": log, "sosId": event_id})
-            self._persist()
+            self._persist(force=True)
             return dict(event)
 
     def update_sos(self, event_id: str, status: str, operator: str) -> dict:
@@ -288,7 +352,7 @@ class MonitoringStore:
                 title = f"{event['id']} 요청 취소"
             log = self._log("RESCUE", title, event["clientId"])
             self._publish("state", {"event": log, "sosId": event_id})
-            self._persist()
+            self._persist(force=True)
             return dict(event)
 
     def heartbeat(self, client_id: str) -> dict:
@@ -300,7 +364,7 @@ class MonitoringStore:
             if was_offline:
                 event = self._log("RECONNECT", f"{client['name']} 연결 복구", client_id)
                 self._publish("state", {"event": event, "clientId": client_id})
-                self._persist()
+                self._persist(force=True)
             return dict(client)
 
     def disconnect(self, client_id: str) -> dict:
@@ -311,21 +375,61 @@ class MonitoringStore:
             client["lastSeenAt"] = now()
             event = self._log("DISCONNECT", f"{client['name']} 접속 종료", client_id)
             self._publish("state", {"event": event, "clientId": client_id})
-            self._persist()
+            self._persist(force=True)
             return dict(client)
 
-    def snapshot(self) -> dict:
+    def snapshot(self, region_id: Optional[str] = None) -> dict:
         with self.lock:
             self._expire_stale_clients()
+            danger_areas = self.danger_areas
+            sos_events = list(self.sos_events.values())
+            timeline = self.timeline
+            if region_id:
+                client_ids = self.clients_by_region.get(region_id, set())
+                clients = [self.clients[client_id] for client_id in sorted(client_ids)]
+                danger_areas = [
+                    item for item in danger_areas if item.get("regionId") == region_id
+                ]
+                sos_events = [
+                    item for item in sos_events if item.get("clientId") in client_ids
+                ]
+                timeline = [
+                    item
+                    for item in timeline
+                    if not item.get("clientId") or item.get("clientId") in client_ids
+                ]
+            else:
+                clients = list(self.clients.values())
             return {
-                "clients": list(self.clients.values()),
-                "dangerAreas": self.danger_areas,
+                "clients": clients,
+                "dangerAreas": danger_areas,
                 "sosEvents": sorted(
-                    self.sos_events.values(), key=lambda item: item["createdAt"], reverse=True
+                    sos_events, key=lambda item: item["createdAt"], reverse=True
                 ),
-                "timeline": self.timeline,
+                "timeline": timeline,
+                "regions": self._region_summaries(),
                 "serverTime": now(),
             }
+
+    def _region_summaries(self) -> list[dict]:
+        stats = {
+            region["id"]: {"total": 0, "online": 0, "danger": 0, "sos": 0}
+            for region in REGIONS
+        }
+        for client in self.clients.values():
+            region_stats = stats.get(client.get("regionId"))
+            if not region_stats:
+                continue
+            region_stats["total"] += 1
+            region_stats["online"] += client["connectionStatus"] == "ONLINE"
+            region_stats["danger"] += client["dangerState"] == "DANGER"
+        for event in self.sos_events.values():
+            if event["status"] not in {"OPEN", "ACKNOWLEDGED"}:
+                continue
+            client = self.clients.get(event["clientId"])
+            if client and client.get("regionId") in stats:
+                stats[client["regionId"]]["sos"] += 1
+        return [{**region, **stats[region["id"]]} for region in REGIONS]
 
     def _expire_stale_clients(self) -> None:
         deadline = datetime.now(timezone.utc) - timedelta(seconds=self.client_timeout_seconds)
@@ -342,12 +446,21 @@ class MonitoringStore:
                 self._publish("state", {"event": event, "clientId": client["id"]})
                 changed = True
         if changed:
-            self._persist()
+            self._persist(force=True)
 
     def route(self, client_id: str) -> list[dict]:
         with self.lock:
             self._require_client(client_id)
             return list(self.routes.get(client_id, []))
+
+    def client(self, client_id: str) -> dict:
+        with self.lock:
+            return dict(self._require_client(client_id))
+
+    def client_for_user(self, user_id: str) -> Optional[dict]:
+        with self.lock:
+            client_id = self.client_by_user.get(user_id)
+            return dict(self.clients[client_id]) if client_id else None
 
     def subscribe(self) -> queue.Queue:
         subscriber: queue.Queue = queue.Queue(maxsize=20)
@@ -367,41 +480,123 @@ class MonitoringStore:
         return client
 
 
-STORE = MonitoringStore(SQLiteStateRepository(DATABASE_PATH))
+REPOSITORY = SQLiteStateRepository(DATABASE_PATH)
+STORE = MonitoringStore(REPOSITORY)
+AUTH = AuthRepository(DATABASE_PATH)
 
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "RTLS/1.0"
 
     def do_GET(self) -> None:
-        parsed = urlparse(self.path)
-        path = parsed.path
-        if path == "/":
-            return self._redirect("/monitor")
-        if path == "/monitor":
-            return self._static("monitor.html")
-        if path == "/app":
-            return self._static("app.html")
-        if path.startswith("/static/"):
-            return self._static(path.removeprefix("/static/"))
-        if path == "/api/state":
-            return self._json(STORE.snapshot())
-        if path == "/api/events":
-            return self._events()
-        match = re.fullmatch(r"/api/clients/([^/]+)/route", path)
-        if match:
-            return self._json({"route": STORE.route(match.group(1))})
-        self._error(HTTPStatus.NOT_FOUND, "페이지를 찾을 수 없습니다.")
+        try:
+            parsed = urlparse(self.path)
+            path = parsed.path
+            query = parse_qs(parsed.query)
+            if path == "/":
+                return self._redirect("/monitor")
+            if path == "/monitor":
+                return self._static("monitor.html")
+            if path == "/app":
+                return self._static("app.html")
+            if path.startswith("/static/"):
+                return self._static(path.removeprefix("/static/"))
+            if path == "/api/regions":
+                return self._json({"regions": REGIONS})
+            if path == "/api/auth/me":
+                return self._json({"user": self._user()})
+            if path == "/api/operators":
+                self._user({"NATIONAL_ADMIN"})
+                return self._json({"operators": AUTH.list_operators()})
+            if path == "/api/state":
+                user = self._user({"NATIONAL_ADMIN", "REGIONAL_OPERATOR"})
+                region_id = query.get("region", [None])[0]
+                region_id = self._authorized_region(user, region_id)
+                state = STORE.snapshot(region_id)
+                if user["role"] == "REGIONAL_OPERATOR":
+                    state["regions"] = [
+                        region
+                        for region in state["regions"]
+                        if region["id"] == user["regionId"]
+                    ]
+                return self._json(state)
+            if path == "/api/events":
+                token = query.get("token", [""])[0]
+                user = self._user(
+                    {"NATIONAL_ADMIN", "REGIONAL_OPERATOR"}, token=token
+                )
+                return self._events(user)
+            match = re.fullmatch(r"/api/clients/([^/]+)/route", path)
+            if match:
+                user = self._user()
+                client_id = match.group(1)
+                self._authorize_client(user, client_id)
+                return self._json({"route": STORE.route(client_id)})
+            self._error(HTTPStatus.NOT_FOUND, "페이지를 찾을 수 없습니다.")
+        except AuthenticationError as exc:
+            self._error(HTTPStatus.UNAUTHORIZED, str(exc))
+        except AuthorizationError as exc:
+            self._error(HTTPStatus.FORBIDDEN, str(exc))
+        except KeyError as exc:
+            self._error(HTTPStatus.NOT_FOUND, str(exc).strip("'"))
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         try:
             payload = self._body()
+            if path == "/api/auth/signup":
+                user = AUTH.create_user(
+                    payload.get("username", ""),
+                    payload.get("password", ""),
+                    payload.get("displayName", ""),
+                    payload.get("regionId", ""),
+                )
+                session = AUTH.login(
+                    payload.get("username", ""), payload.get("password", "")
+                )
+                return self._json(
+                    {"user": user, **session}, HTTPStatus.CREATED
+                )
+            if path == "/api/auth/login":
+                return self._json(
+                    AUTH.login(
+                        payload.get("username", ""), payload.get("password", "")
+                    )
+                )
+            if path == "/api/auth/logout":
+                AUTH.logout(self._token())
+                return self._json({"ok": True})
+            if path == "/api/operators":
+                self._user({"NATIONAL_ADMIN"})
+                operator = AUTH.create_user(
+                    payload.get("username", ""),
+                    payload.get("password", ""),
+                    payload.get("displayName", ""),
+                    payload.get("regionId", ""),
+                    role="REGIONAL_OPERATOR",
+                )
+                return self._json({"operator": operator}, HTTPStatus.CREATED)
             if path == "/api/clients":
-                return self._json({"client": STORE.register(payload)}, HTTPStatus.CREATED)
+                user = self._user({"USER"})
+                existing = STORE.client_for_user(user["id"])
+                if existing:
+                    client = STORE.heartbeat(existing["id"])
+                    return self._json({"client": client})
+                payload.update(
+                    {
+                        "name": user["displayName"],
+                        "userId": user["id"],
+                        "regionId": user["regionId"],
+                    }
+                )
+                return self._json(
+                    {"client": STORE.register(payload)}, HTTPStatus.CREATED
+                )
             match = re.fullmatch(r"/api/clients/([^/]+)/(location|sos|heartbeat|disconnect)", path)
             if match:
                 client_id, action = match.groups()
+                user = self._user({"USER"})
+                self._authorize_client(user, client_id)
                 if action == "location":
                     return self._json({"client": STORE.update_location(client_id, payload)})
                 if action == "sos":
@@ -411,11 +606,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"client": STORE.disconnect(client_id)})
             match = re.fullmatch(r"/api/sos/([^/]+)", path)
             if match:
+                user = self._user({"NATIONAL_ADMIN", "REGIONAL_OPERATOR"})
+                event = STORE.sos_events.get(match.group(1))
+                if not event:
+                    raise KeyError("SOS 이벤트를 찾을 수 없습니다.")
+                self._authorize_client(user, event["clientId"])
                 event = STORE.update_sos(
-                    match.group(1), str(payload.get("status", "")), str(payload.get("operator", ""))
+                    match.group(1),
+                    str(payload.get("status", "")),
+                    user["displayName"],
                 )
                 return self._json({"sos": event})
             self._error(HTTPStatus.NOT_FOUND, "API를 찾을 수 없습니다.")
+        except AuthenticationError as exc:
+            self._error(HTTPStatus.UNAUTHORIZED, str(exc))
+        except AuthorizationError as exc:
+            self._error(HTTPStatus.FORBIDDEN, str(exc))
         except (ValueError, TypeError) as exc:
             self._error(HTTPStatus.BAD_REQUEST, str(exc))
         except KeyError as exc:
@@ -431,6 +637,37 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             raise ValueError("JSON 객체 형식의 요청이 필요합니다.")
         return payload
+
+    def _token(self) -> str:
+        header = self.headers.get("Authorization", "")
+        if header.startswith("Bearer "):
+            return header.removeprefix("Bearer ").strip()
+        return ""
+
+    def _user(self, roles: Optional[set[str]] = None, token: str = "") -> dict:
+        user = AUTH.authenticate(token or self._token())
+        if roles and user["role"] not in roles:
+            raise AuthorizationError("이 기능을 사용할 권한이 없습니다.")
+        return user
+
+    def _authorized_region(
+        self, user: dict, requested_region: Optional[str]
+    ) -> Optional[str]:
+        if user["role"] == "REGIONAL_OPERATOR":
+            return user["regionId"]
+        if requested_region and requested_region not in REGION_BY_ID:
+            raise ValueError("유효하지 않은 지역입니다.")
+        return requested_region
+
+    def _authorize_client(self, user: dict, client_id: str) -> None:
+        client = STORE.client(client_id)
+        if user["role"] == "USER" and client.get("userId") != user["id"]:
+            raise AuthorizationError("다른 사용자의 단말에는 접근할 수 없습니다.")
+        if (
+            user["role"] == "REGIONAL_OPERATOR"
+            and client.get("regionId") != user["regionId"]
+        ):
+            raise AuthorizationError("담당 지역 밖의 단말에는 접근할 수 없습니다.")
 
     def _json(self, data: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -461,7 +698,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _events(self) -> None:
+    def _events(self, user: dict) -> None:
         subscriber = STORE.subscribe()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/event-stream")
@@ -491,14 +728,24 @@ class Handler(BaseHTTPRequestHandler):
 
 def run(host: str = HOST, port: int = PORT) -> None:
     server = ThreadingHTTPServer((host, port), Handler)
-    print(f"RTLS server running: http://{host}:{port}")
-    print(f"Monitoring dashboard: http://{host}:{port}/monitor")
-    print(f"Client app:          http://{host}:{port}/app")
+    local_host = "127.0.0.1"
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("8.8.8.8", 80))
+            local_host = probe.getsockname()[0]
+    except OSError:
+        pass
+    print(f"RTLS server running on {host}:{port}")
+    print(f"Monitoring dashboard: http://127.0.0.1:{port}/monitor")
+    print(f"Client app (Mac):     http://127.0.0.1:{port}/app")
+    if host in {"0.0.0.0", ""}:
+        print(f"Client app (phone):   http://{local_host}:{port}/app")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nServer stopped.")
     finally:
+        STORE.flush()
         server.server_close()
 
 

@@ -12,14 +12,30 @@
   <main class="phone">
     <header>
       <div><span class="eyebrow">RTLS Safety</span><h1>안전 위치 알림</h1></div>
-      <span id="connectionPill" class="pill"><i class="status-dot offline"></i> 연결 안 됨</span>
+      <div class="account-actions">
+        <span id="connectionPill" class="pill"><i class="status-dot offline"></i> 연결 안 됨</span>
+        <button id="logoutBtn" class="text-button" hidden>로그아웃</button>
+      </div>
     </header>
 
-    <section id="setupCard" class="setup panel">
+    <section id="authCard" class="setup panel">
+      <span class="eyebrow">Account</span>
+      <h2>로그인 또는 회원가입</h2>
+      <p>계정과 담당 지역을 서버에 등록하면 같은 계정으로 다시 접속할 수 있습니다.</p>
+      <div class="auth-tabs"><button id="loginTab" class="active">로그인</button><button id="signupTab">회원가입</button></div>
+      <label>아이디<input id="usernameInput" autocomplete="username" placeholder="영문·숫자 4자 이상"></label>
+      <label>비밀번호<input id="passwordInput" type="password" autocomplete="current-password" placeholder="8자 이상"></label>
+      <div id="signupFields" hidden>
+        <label>표시 이름<input id="displayNameInput" maxlength="30" placeholder="예: 김지훈"></label>
+        <label>거주·관리 지역<select id="regionInput"></select></label>
+      </div>
+      <button id="authBtn" class="btn btn-primary">로그인</button>
+    </section>
+
+    <section id="setupCard" class="setup panel" hidden>
       <span class="eyebrow">Start Monitoring</span>
       <h2>안전 서비스를 시작합니다</h2>
-      <p>이름을 입력하면 관제센터와 연결되고 현재 위치를 전송할 수 있습니다.</p>
-      <label>사용자 이름<input id="nameInput" maxlength="30" placeholder="예: 김지훈"></label>
+      <p><strong id="accountName"></strong> 님의 위치를 담당 지역 관제센터와 공유합니다.</p>
       <label class="consent"><input id="locationConsent" type="checkbox"> 위치 정보 수집 및 관제센터 공유에 동의합니다.</label>
       <button id="connectBtn" class="btn btn-primary">관제센터 연결</button>
     </section>
@@ -34,6 +50,7 @@
 
       <section class="info-grid">
         <article class="panel"><span>사용자 ID</span><strong id="clientId">-</strong></article>
+        <article class="panel"><span>담당 지역</span><strong id="clientRegion">-</strong></article>
         <article class="panel"><span>최근 전송</span><strong id="lastUpdate">-</strong></article>
       </section>
 

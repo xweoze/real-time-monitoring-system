@@ -6,6 +6,19 @@ from tempfile import TemporaryDirectory
 from server import MonitoringStore, SQLiteStateRepository, distance_m
 
 
+class CountingRepository:
+    def __init__(self):
+        self.save_count = 0
+        self.state = None
+
+    def load(self):
+        return self.state
+
+    def save(self, state):
+        self.save_count += 1
+        self.state = state
+
+
 class MonitoringStoreTest(unittest.TestCase):
     def setUp(self):
         self.store = MonitoringStore()
@@ -57,6 +70,7 @@ class MonitoringStoreTest(unittest.TestCase):
             store = MonitoringStore(repository)
             client = store.register({"name": "저장 사용자"})
             store.update_location(client["id"], {"lat": 37.512, "lng": 127.010})
+            store.flush()
 
             restored = MonitoringStore(repository)
             self.assertEqual(restored.clients[client["id"]]["name"], "저장 사용자")
@@ -69,6 +83,38 @@ class MonitoringStoreTest(unittest.TestCase):
 
     def test_distance(self):
         self.assertLess(distance_m(37.4979, 127.0276, 37.4979, 127.0276), 0.01)
+
+    def test_snapshot_can_be_filtered_by_region(self):
+        seoul = self.store.register({"name": "서울", "regionId": "KR-11"})
+        busan = self.store.register({"name": "부산", "regionId": "KR-26"})
+
+        snapshot = self.store.snapshot("KR-11")
+
+        self.assertEqual(
+            [client["id"] for client in snapshot["clients"]], [self.client["id"], seoul["id"]]
+        )
+        self.assertNotIn(
+            busan["id"], [client["id"] for client in snapshot["clients"]]
+        )
+        self.assertEqual(len(snapshot["regions"]), 17)
+
+    def test_location_persistence_is_debounced(self):
+        repository = CountingRepository()
+        store = MonitoringStore(repository, persist_debounce_seconds=60)
+        client = store.register(
+            {"name": "연속 위치 사용자", "userId": "U-1", "regionId": "KR-26"}
+        )
+
+        for offset in range(30):
+            store.update_location(
+                client["id"],
+                {"lat": 35.2 + offset / 100_000, "lng": 129.0},
+            )
+
+        self.assertEqual(repository.save_count, 1)
+        self.assertEqual(store.client_for_user("U-1")["id"], client["id"])
+        store.flush()
+        self.assertEqual(repository.save_count, 2)
 
 
 if __name__ == "__main__":
