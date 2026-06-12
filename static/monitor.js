@@ -310,11 +310,14 @@ function renderDetail() {
     return;
   }
   const sos = openSosByClient.get(client.id);
+  const age = calculateAge(client.birthDate);
   target.innerHTML = `
-    <div class="client-identity"><div class="avatar">${escapeHtml(client.name.slice(0,1))}</div><div><b>${escapeHtml(client.name)}</b><span>${client.id} · ${escapeHtml(regionName(client.regionId))}</span></div></div>
+    <div class="client-identity"><div class="avatar">${escapeHtml(client.name.slice(0,1))}</div><div><b>${escapeHtml(client.name)}</b><span>${client.id} · ${escapeHtml(regionName(client.regionId))} · ${age === null ? "연령 미입력" : `만 ${age}세`} · ${genderLabel(client.gender)}</span></div></div>
     <div class="detail-grid">
       <div><label>안전 상태</label><strong class="state-text ${client.dangerState.toLowerCase()}">${client.dangerState}</strong></div>
       <div><label>최근 갱신</label><strong data-ago="${client.updatedAt}">${ago(client.updatedAt)}</strong></div>
+      <div><label>연령</label><strong>${age === null ? "-" : `만 ${age}세`}</strong></div>
+      <div><label>성별</label><strong>${genderLabel(client.gender)}</strong></div>
       <div><label>위도</label><strong>${client.location?.lat?.toFixed(5) || "-"}</strong></div>
       <div><label>경도</label><strong>${client.location?.lng?.toFixed(5) || "-"}</strong></div>
       <div><label>위치 정확도</label><strong>${client.location ? `${Math.round(client.location.accuracy || 0)} m` : "-"}</strong></div>
@@ -346,7 +349,7 @@ function renderTable() {
     : "";
   document.querySelector("#clientsTable").innerHTML = clients.map(client => `
     <tr data-id="${client.id}">
-      <td><b>${escapeHtml(client.name)}</b><br><span class="muted">${client.id} · ${escapeHtml(regionName(client.regionId))}</span></td>
+      <td><b>${escapeHtml(client.name)}</b><br><span class="muted">${client.id} · ${escapeHtml(regionName(client.regionId))} · ${calculateAge(client.birthDate) === null ? "연령 미입력" : `만 ${calculateAge(client.birthDate)}세`} · ${genderLabel(client.gender)}</span></td>
       <td>${client.connectionStatus}${isLocationStale(client) ? `<br><span class="stale-text">STALE LOCATION</span>` : ""}</td>
       <td><b class="state-text ${client.dangerState.toLowerCase()}">${client.dangerState}</b></td>
       <td><span data-ago="${client.updatedAt}">${ago(client.updatedAt)}</span></td>

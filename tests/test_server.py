@@ -31,6 +31,32 @@ class MonitoringStoreTest(unittest.TestCase):
         self.assertEqual(updated["dangerState"], "SAFE")
         self.assertEqual(len(self.store.route(self.client["id"])), 1)
 
+    def test_client_profile_is_stored_and_can_be_synced(self):
+        client = self.store.register(
+            {
+                "name": "보호 대상",
+                "userId": "U-PROFILE",
+                "regionId": "KR-11",
+                "birthDate": "2017-03-01",
+                "gender": "FEMALE",
+            }
+        )
+
+        synced = self.store.sync_client_profile(
+            client["id"],
+            {
+                "displayName": "보호 대상 수정",
+                "regionId": "KR-26",
+                "birthDate": "2017-03-01",
+                "gender": "FEMALE",
+            },
+        )
+
+        self.assertEqual(synced["birthDate"], "2017-03-01")
+        self.assertEqual(synced["gender"], "FEMALE")
+        self.assertIn(client["id"], self.store.clients_by_region["KR-26"])
+        self.assertNotIn(client["id"], self.store.clients_by_region["KR-11"])
+
     def test_danger_detection(self):
         updated = self.store.update_location(
             self.client["id"], {"lat": 37.4979, "lng": 127.0276, "accuracy": 3}

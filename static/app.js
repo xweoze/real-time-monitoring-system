@@ -49,6 +49,8 @@ async function submitAuth() {
   };
   if (signupMode) {
     payload.displayName = document.querySelector("#displayNameInput").value.trim();
+    payload.birthDate = document.querySelector("#birthDateInput").value || null;
+    payload.gender = document.querySelector("#genderInput").value;
     payload.regionId = document.querySelector("#regionInput").value;
   }
   try {
@@ -178,6 +180,9 @@ function stopAutoShare() {
 function renderClient() {
   document.querySelector("#clientId").textContent = client?.id || "-";
   document.querySelector("#clientRegion").textContent = regionName(client?.regionId);
+  const age = calculateAge(client?.birthDate);
+  document.querySelector("#clientAge").textContent = age === null ? "-" : `만 ${age}세`;
+  document.querySelector("#clientGender").textContent = genderLabel(client?.gender);
   document.querySelector("#lastUpdate").textContent = ago(client?.updatedAt);
   const danger = client?.dangerState === "DANGER";
   const hero = document.querySelector("#hero");
@@ -314,6 +319,7 @@ setInterval(renderClient, 1000);
 
 async function initialize() {
   regions = await loadRegions([document.querySelector("#regionInput")]);
+  document.querySelector("#birthDateInput").max = new Date().toISOString().slice(0, 10);
   if (authSession.token) {
     try {
       const data = await api("/api/auth/me");

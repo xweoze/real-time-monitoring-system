@@ -27,6 +27,15 @@
       <label>비밀번호<input id="passwordInput" type="password" autocomplete="current-password" placeholder="8자 이상"></label>
       <div id="signupFields" hidden>
         <label>표시 이름<input id="displayNameInput" maxlength="30" placeholder="예: 김지훈"></label>
+        <label>생년월일 (선택)<input id="birthDateInput" type="date" autocomplete="bday"></label>
+        <label>성별 (선택)
+          <select id="genderInput">
+            <option value="UNDISCLOSED">응답하지 않음</option>
+            <option value="FEMALE">여성</option>
+            <option value="MALE">남성</option>
+            <option value="OTHER">기타</option>
+          </select>
+        </label>
         <label>거주·관리 지역<select id="regionInput"></select></label>
       </div>
       <button id="authBtn" class="btn btn-primary">로그인</button>
@@ -51,6 +60,8 @@
       <section class="info-grid">
         <article class="panel"><span>사용자 ID</span><strong id="clientId">-</strong></article>
         <article class="panel"><span>담당 지역</span><strong id="clientRegion">-</strong></article>
+        <article class="panel"><span>연령</span><strong id="clientAge">-</strong></article>
+        <article class="panel"><span>성별</span><strong id="clientGender">-</strong></article>
         <article class="panel"><span>최근 전송</span><strong id="lastUpdate">-</strong></article>
       </section>
 

@@ -38,10 +38,20 @@ class AuthRepository:
                     display_name TEXT NOT NULL,
                     role TEXT NOT NULL,
                     region_id TEXT,
+                    birth_date TEXT,
+                    gender TEXT,
                     created_at TEXT NOT NULL
                 )
                 """
             )
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(users)").fetchall()
+            }
+            if "birth_date" not in columns:
+                connection.execute("ALTER TABLE users ADD COLUMN birth_date TEXT")
+            if "gender" not in columns:
+                connection.execute("ALTER TABLE users ADD COLUMN gender TEXT")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS sessions (
@@ -78,6 +88,8 @@ class AuthRepository:
             "displayName": row["display_name"],
             "role": row["role"],
             "regionId": row["region_id"],
+            "birthDate": row["birth_date"],
+            "gender": row["gender"] or "UNDISCLOSED",
             "createdAt": row["created_at"],
         }
 
@@ -88,6 +100,8 @@ class AuthRepository:
         display_name: str,
         role: str,
         region_id: Optional[str],
+        birth_date: Optional[str] = None,
+        gender: str = "UNDISCLOSED",
     ) -> dict:
         salt = os.urandom(16).hex()
         user_id = "U-" + uuid.uuid4().hex[:10]
@@ -98,8 +112,8 @@ class AuthRepository:
                     """
                     INSERT INTO users (
                         id, username, password_hash, salt, display_name, role,
-                        region_id, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        region_id, birth_date, gender, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         user_id,
@@ -109,6 +123,8 @@ class AuthRepository:
                         display_name,
                         role,
                         region_id,
+                        birth_date,
+                        gender,
                         created_at,
                     ),
                 )
@@ -120,6 +136,8 @@ class AuthRepository:
             "displayName": display_name,
             "role": role,
             "regionId": region_id,
+            "birthDate": birth_date,
+            "gender": gender,
             "createdAt": created_at,
         }
 
@@ -144,6 +162,8 @@ class AuthRepository:
         display_name: str,
         region_id: str,
         role: str = "USER",
+        birth_date: Optional[str] = None,
+        gender: str = "UNDISCLOSED",
     ) -> dict:
         username = str(username or "").strip()
         password = str(password or "")
@@ -158,7 +178,29 @@ class AuthRepository:
             raise ValueError("지원하지 않는 계정 역할입니다.")
         if region_id not in REGION_BY_ID:
             raise ValueError("유효한 지역을 선택해 주세요.")
-        return self._insert_user(username, password, display_name, role, region_id)
+        gender = str(gender or "UNDISCLOSED").upper()
+        if gender not in {"FEMALE", "MALE", "OTHER", "UNDISCLOSED"}:
+            raise ValueError("유효한 성별 값을 선택해 주세요.")
+        birth_date = str(birth_date or "").strip() or None
+        if birth_date:
+            try:
+                parsed_birth_date = datetime.strptime(birth_date, "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise ValueError("생년월일 형식이 올바르지 않습니다.") from exc
+            today = datetime.now(timezone.utc).date()
+            if parsed_birth_date > today:
+                raise ValueError("생년월일은 미래 날짜일 수 없습니다.")
+            if parsed_birth_date.year < today.year - 130:
+                raise ValueError("생년월일을 다시 확인해 주세요.")
+        return self._insert_user(
+            username,
+            password,
+            display_name,
+            role,
+            region_id,
+            birth_date,
+            gender,
+        )
 
     def login(self, username: str, password: str) -> dict:
         with self._connect() as connection:

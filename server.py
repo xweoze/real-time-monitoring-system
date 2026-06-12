@@ -140,6 +140,8 @@ class MonitoringStore:
             client["connectionStatus"] = "OFFLINE"
             client.setdefault("regionId", "KR-11")
             client.setdefault("userId", None)
+            client.setdefault("birthDate", None)
+            client.setdefault("gender", "UNDISCLOSED")
         self._rebuild_indexes()
 
     def _state_payload(self) -> dict:
@@ -224,6 +226,8 @@ class MonitoringStore:
                 "name": str(payload.get("name") or f"사용자 {self.sequence}")[:30],
                 "deviceId": str(payload.get("deviceId") or uuid.uuid4().hex[:12])[:40],
                 "userId": payload.get("userId"),
+                "birthDate": payload.get("birthDate"),
+                "gender": payload.get("gender", "UNDISCLOSED"),
                 "regionId": (
                     payload.get("regionId")
                     if payload.get("regionId") in REGION_BY_ID
@@ -462,6 +466,21 @@ class MonitoringStore:
             client_id = self.client_by_user.get(user_id)
             return dict(self.clients[client_id]) if client_id else None
 
+    def sync_client_profile(self, client_id: str, user: dict) -> dict:
+        with self.lock:
+            client = self._require_client(client_id)
+            client.update(
+                {
+                    "name": user["displayName"],
+                    "regionId": user["regionId"],
+                    "birthDate": user.get("birthDate"),
+                    "gender": user.get("gender", "UNDISCLOSED"),
+                }
+            )
+            self._rebuild_indexes()
+            self._persist(force=True)
+            return dict(client)
+
     def subscribe(self) -> queue.Queue:
         subscriber: queue.Queue = queue.Queue(maxsize=20)
         with self.lock:
@@ -550,6 +569,8 @@ class Handler(BaseHTTPRequestHandler):
                     payload.get("password", ""),
                     payload.get("displayName", ""),
                     payload.get("regionId", ""),
+                    birth_date=payload.get("birthDate"),
+                    gender=payload.get("gender", "UNDISCLOSED"),
                 )
                 session = AUTH.login(
                     payload.get("username", ""), payload.get("password", "")
@@ -580,6 +601,7 @@ class Handler(BaseHTTPRequestHandler):
                 user = self._user({"USER"})
                 existing = STORE.client_for_user(user["id"])
                 if existing:
+                    STORE.sync_client_profile(existing["id"], user)
                     client = STORE.heartbeat(existing["id"])
                     return self._json({"client": client})
                 payload.update(
@@ -587,6 +609,8 @@ class Handler(BaseHTTPRequestHandler):
                         "name": user["displayName"],
                         "userId": user["id"],
                         "regionId": user["regionId"],
+                        "birthDate": user.get("birthDate"),
+                        "gender": user.get("gender", "UNDISCLOSED"),
                     }
                 )
                 return self._json(
