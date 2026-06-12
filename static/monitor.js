@@ -1,4 +1,4 @@
-let snapshot = { clients: [], dangerAreas: [], sosEvents: [], timeline: [], regions: [] };
+let snapshot = { clients: [], dangerAreas: [], sosEvents: [], timeline: [], regions: [], publicAlerts: [] };
 let regions = [];
 let selectedId = null;
 let selectedRoute = [];
@@ -63,6 +63,25 @@ const isLocationStale = client => {
   return Date.now() - new Date(client.location.capturedAt).getTime() > 60000;
 };
 const regionName = id => regionById.get(id)?.name || id || "미지정";
+const eventTypeLabel = type => ({
+  CONNECT: "접속",
+  RECONNECT: "재접속",
+  DISCONNECT: "접속 종료",
+  TIMEOUT: "응답 지연",
+  DANGER: "위험 감지",
+  SOS: "긴급 요청",
+  RESCUE: "구조 처리",
+  MEMBER_DELETE: "회원 삭제",
+}[type] || type || "시스템");
+
+const todayEvents = () => {
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Seoul" });
+  return snapshot.timeline.filter(event =>
+    new Date(event.createdAt).toLocaleDateString("en-CA", {
+      timeZone: "Asia/Seoul",
+    }) === today
+  );
+};
 
 const polygonPoints = coordinates => coordinates.map(([lat, lng]) => {
   const point = project(lat, lng);
@@ -123,8 +142,10 @@ async function login(event) {
 async function logout() {
   if (events) events.close();
   events = null;
+  closeTodayEvents();
+  closeOperatorManager();
   await logoutSession();
-  snapshot = { clients: [], dangerAreas: [], sosEvents: [], timeline: [], regions: [] };
+  snapshot = { clients: [], dangerAreas: [], sosEvents: [], timeline: [], regions: [], publicAlerts: [] };
   rebuildIndexes();
   render();
   showLogin(true);
@@ -135,14 +156,14 @@ async function startDashboard() {
   const user = authSession.user;
   document.querySelector("#operatorName").textContent = user.displayName;
   const filter = document.querySelector("#regionFilter");
+  const operatorMenuButton = document.querySelector("#operatorMenuBtn");
   if (user.role === "NATIONAL_ADMIN") {
     filter.hidden = false;
-    document.querySelector("#operatorPanel").hidden = false;
+    operatorMenuButton.hidden = false;
     selectedRegion = filter.value;
-    await loadOperators();
   } else {
     filter.hidden = true;
-    document.querySelector("#operatorPanel").hidden = true;
+    operatorMenuButton.hidden = true;
     selectedRegion = user.regionId;
   }
   showLogin(false);
@@ -204,21 +225,26 @@ function scheduleRefresh(delay = 500) {
 function render() {
   let onlineCount = 0;
   const danger = [];
+  const todayEventCount = todayEvents().length;
   for (const client of snapshot.clients) {
     onlineCount += client.connectionStatus === "ONLINE";
     if (client.dangerState === "DANGER") danger.push(client);
   }
   const openSos = [...openSosByClient.values()];
+  const publicAlerts = snapshot.publicAlerts || [];
   document.querySelector("#onlineCount").textContent = onlineCount;
   document.querySelector("#dangerCount").textContent = danger.length;
   document.querySelector("#sosCount").textContent = openSos.length;
-  document.querySelector("#eventCount").textContent = snapshot.timeline.length;
-  document.querySelector("#alertBadge").textContent = openSos.length + danger.length;
+  document.querySelector("#eventCount").textContent = todayEventCount;
+  document.querySelector("#alertBadge").textContent = openSos.length + danger.length + publicAlerts.length;
+  const sourceStatus = document.querySelector("#publicAlertStatus");
+  sourceStatus.textContent = snapshot.publicAlertStatus?.message || "공공데이터 상태 미확인";
+  sourceStatus.classList.toggle("connected", Boolean(snapshot.publicAlertStatus?.connected));
   document.querySelector("#mapTitle").textContent = selectedRegion
     ? `${regionName(selectedRegion)} 지역 관제 지도`
     : "대한민국 통합 관제 지도";
   renderMap();
-  renderAlerts(openSos, danger);
+  renderAlerts(openSos, danger, publicAlerts);
   renderDetail();
   renderTable();
   renderTimeline();
@@ -228,7 +254,11 @@ function render() {
 function renderMap() {
   document.querySelector("#regionMarkers").innerHTML = (snapshot.regions || []).map(region => {
     const point = project(region.lat, region.lng);
-    const level = region.sos ? "sos" : region.danger ? "danger" : "";
+    const level = region.sos || region.publicSeverity === "CRITICAL"
+      ? "sos"
+      : region.danger || region.publicSeverity === "WARNING"
+        ? "danger"
+        : "";
     const offset = regionLabelOffsets[region.id] || { dx: 0, dy: 0 };
     return `
       <i class="region-anchor" style="left:${point.x}%;top:${point.y}%"></i>
@@ -236,7 +266,7 @@ function renderMap() {
         style="left:${point.x}%;top:${point.y}%;--dx:${offset.dx}px;--dy:${offset.dy}px"
         data-region="${region.id}" title="${escapeHtml(region.name)}">
         <b>${escapeHtml(region.name.replace(/(특별자치도|특별자치시|특별시|광역시|도)$/,""))}</b>
-        <span>${region.online}/${region.total}</span>
+        <span>${region.online}/${region.total}${region.publicAlerts ? ` · 알림 ${region.publicAlerts}` : ""}</span>
       </button>`;
   }).join("");
   document.querySelectorAll(".region-marker").forEach(marker => {
@@ -282,7 +312,13 @@ function renderMap() {
     : "";
 }
 
-function renderAlerts(sosEvents, dangerClients) {
+function renderAlerts(sosEvents, dangerClients, publicAlerts) {
+  const publicCards = publicAlerts.slice(0, MAX_ALERTS).map(alert => `
+    <article class="alert-card public ${alert.severity.toLowerCase()}">
+      <div class="alert-top"><b>${escapeHtml(alert.source)} · ${escapeHtml(alert.severity)}</b><span data-ago="${alert.issuedAt}">${ago(alert.issuedAt)}</span></div>
+      <h3>${escapeHtml(alert.title)}</h3>
+      <p>${escapeHtml(alert.message || regionName(alert.regionId))}</p>
+    </article>`).join("");
   const sos = sosEvents.slice(0, MAX_ALERTS).map(event => `
     <article class="alert-card sos" data-client="${event.clientId}">
       <div class="alert-top"><b>SOS · ${escapeHtml(event.status)}</b><span data-ago="${event.createdAt}">${ago(event.createdAt)}</span></div>
@@ -296,8 +332,8 @@ function renderAlerts(sosEvents, dangerClients) {
       <div class="alert-top"><b>DANGER</b><span data-ago="${client.updatedAt}">${ago(client.updatedAt)}</span></div>
       <h3>${escapeHtml(client.name)} 위험 지역 진입</h3><p>${escapeHtml(client.dangerArea?.name || "위험 구역")}</p>
     </article>`).join("");
-  document.querySelector("#alerts").innerHTML = sos + danger || `<p class="empty">활성 알림이 없습니다.</p>`;
-  document.querySelectorAll(".alert-card").forEach(card => {
+  document.querySelector("#alerts").innerHTML = publicCards + sos + danger || `<p class="empty">선택한 지역의 활성 알림이 없습니다.</p>`;
+  document.querySelectorAll(".alert-card[data-client]").forEach(card => {
     card.onclick = () => selectClient(card.dataset.client);
   });
 }
@@ -366,6 +402,27 @@ function renderTimeline() {
     </div>`).join("") || `<p class="empty">아직 이벤트가 없습니다.</p>`;
 }
 
+function openTodayEvents() {
+  const eventsForToday = todayEvents();
+  document.querySelector("#todayEventsList").innerHTML = eventsForToday.map(event => `
+    <article class="today-event">
+      <span class="today-event-type">${escapeHtml(eventTypeLabel(event.type))}</span>
+      <div><b>${escapeHtml(event.title)}</b><small>${escapeHtml(event.clientId || "시스템 이벤트")}</small></div>
+      <time>${new Date(event.createdAt).toLocaleTimeString("ko-KR", {
+        timeZone: "Asia/Seoul",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      })}</time>
+    </article>
+  `).join("") || `<p class="empty">오늘 발생한 이벤트가 없습니다.</p>`;
+  document.querySelector("#eventsOverlay").hidden = false;
+}
+
+function closeTodayEvents() {
+  document.querySelector("#eventsOverlay").hidden = true;
+}
+
 function selectClient(id) {
   selectedId = id;
   selectedRoute = [];
@@ -404,6 +461,23 @@ async function loadOperators() {
   `).join("") || "<span>등록된 지역 관리자가 없습니다.</span>";
 }
 
+async function openOperatorManager() {
+  if (authSession.user?.role !== "NATIONAL_ADMIN") return;
+  document.querySelector("#mainMenu").hidden = true;
+  document.querySelector("#menuBtn").setAttribute("aria-expanded", "false");
+  document.querySelector("#operatorOverlay").hidden = false;
+  try {
+    await loadOperators();
+  } catch (error) {
+    closeOperatorManager();
+    toast(error.message);
+  }
+}
+
+function closeOperatorManager() {
+  document.querySelector("#operatorOverlay").hidden = true;
+}
+
 async function createOperator(event) {
   event.preventDefault();
   try {
@@ -427,7 +501,29 @@ async function createOperator(event) {
 document.querySelector("#monitorLogin").addEventListener("submit", login);
 document.querySelector("#logoutBtn").onclick = logout;
 document.querySelector("#operatorForm").addEventListener("submit", createOperator);
+document.querySelector("#operatorMenuBtn").addEventListener("click", openOperatorManager);
+document.querySelector("#closeOperatorBtn").addEventListener("click", closeOperatorManager);
+document.querySelector("#operatorOverlay").addEventListener("click", event => {
+  if (event.target.id === "operatorOverlay") closeOperatorManager();
+});
 document.querySelector("#search").addEventListener("input", renderTable);
+document.querySelector("#todayEventsCard").addEventListener("click", openTodayEvents);
+document.querySelector("#todayEventsCard").addEventListener("keydown", event => {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    openTodayEvents();
+  }
+});
+document.querySelector("#closeEventsBtn").addEventListener("click", closeTodayEvents);
+document.querySelector("#eventsOverlay").addEventListener("click", event => {
+  if (event.target.id === "eventsOverlay") closeTodayEvents();
+});
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    closeTodayEvents();
+    closeOperatorManager();
+  }
+});
 document.querySelector("#regionFilter").onchange = event => {
   selectedRegion = event.target.value;
   selectedId = null;
@@ -447,6 +543,7 @@ function updateRelativeTimes() {
 }
 
 async function initialize() {
+  setupMainMenu();
   renderGeography();
   regions = await loadRegions([
     document.querySelector("#operatorRegion"),

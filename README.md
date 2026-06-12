@@ -20,7 +20,7 @@ python3 server.py
 
 관제 대시보드의 초기 전국 관리자 계정은 `national_admin` / `admin1234`입니다. 로그인 후 지역별 관제 관리자 계정을 만들 수 있습니다.
 
-사용자 앱에서 회원가입할 때 거주·관리 지역을 선택하고 위치 공유에 동의한 뒤 연결하면 관제 화면에 반영됩니다. `위험 이동 체험` 버튼으로 위험 지역 진입을 확인할 수 있으며, SOS 버튼을 3초간 누르면 담당 지역과 전국 관제 대시보드에 긴급 요청이 생성됩니다.
+사용자 앱에서 회원가입할 때 거주·관리 지역을 선택하고 위치 공유에 동의한 뒤 연결하면 관제 화면에 반영됩니다. SOS 버튼을 3초간 누르면 담당 지역과 전국 관제 대시보드에 긴급 요청이 생성됩니다.
 
 회원가입 시 생년월일과 성별은 선택적으로 저장할 수 있습니다. 관제센터에는 정확한
 생년월일 대신 현재 날짜 기준 만 나이와 성별만 표시됩니다.
@@ -43,6 +43,7 @@ python3 server.py
 - 사용자 앱 위험 경고
 - 3초 길게 누르는 SOS 요청
 - 관제 화면의 사용자·위험·SOS 현황 표시
+- 지역 선택에 따른 공공 재난 알림 필터링과 실시간 갱신
 - SOS 구조 접수 및 완료 처리
 - SOS 상태 전이 순서 검증
 - 사용자별 최근 500개 이동 경로 표시
@@ -73,12 +74,68 @@ Design_*.md               설계 문서
 python3 -m unittest discover -s tests -v
 ```
 
+## 공공 재난 알림 연동
+
+관제 화면은 공공데이터 공급자가 보내는 알림을 `regionId` 기준으로 분리합니다.
+전국 관리자 토큰으로 다음 표준 형식의 데이터를 `/api/public-alerts`에 전달하면
+해당 지역의 `활성 알림`에 즉시 표시되고 SSE로 갱신됩니다.
+
+```json
+{
+  "alerts": [
+    {
+      "sourceId": "official-alert-id",
+      "source": "기상청",
+      "regionId": "KR-11",
+      "type": "HEAVY_RAIN",
+      "severity": "WARNING",
+      "title": "서울 호우주의보",
+      "message": "저지대와 하천 주변 접근에 주의하세요.",
+      "issuedAt": "2026-06-12T12:00:00+09:00",
+      "expiresAt": "2026-06-12T18:00:00+09:00",
+      "sourceUrl": "https://example.go.kr/alert"
+    }
+  ]
+}
+```
+
+동일한 `source`와 `sourceId`는 갱신 처리되며, `expiresAt`이 지난 알림은 화면에서
+자동으로 제외됩니다.
+
+현재 서버에는 행정안전부 긴급재난문자와 기상청 기상특보의 JSON/XML 응답을
+표준 알림으로 변환하고, 기관 지역명을 내부 `KR-*` 코드로 매핑하는 공급자 모듈이
+포함되어 있습니다. 기본 동기화 주기는 5분입니다.
+
+API 활용 신청이 승인되면 예시 설정을 복사하고 승인 화면에 표시된 실제 호출 URL과
+키를 입력합니다. API 키가 포함된 `.env` 파일은 Git에 커밋되지 않습니다.
+
+```bash
+cp .env.example .env
+# .env의 URL과 키 수정
+source .env
+python3 server.py
+```
+
+기관마다 `serviceKey`, `authKey`처럼 키 매개변수 이름이 다르므로 호출 URL에서
+키가 들어갈 위치를 `{service_key}`로 작성합니다.
+
+```bash
+export RTLS_DISASTER_API_URL='기관_호출_URL?serviceKey={service_key}&returnType=json'
+export RTLS_DISASTER_API_KEY='발급받은_키'
+export RTLS_WEATHER_API_URL='기관_호출_URL?authKey={service_key}'
+export RTLS_WEATHER_API_KEY='발급받은_키'
+export RTLS_PUBLIC_DATA_INTERVAL='300'
+```
+
+전국 관리자는 `POST /api/public-alerts/sync`를 호출해 즉시 동기화할 수도 있습니다.
+
 ## 현재 범위와 한계
 
 현재 버전은 로컬 시연용 MVP입니다.
 
 - 서버 재시작 후 데이터는 복구되며 접속 상태는 안전하게 `OFFLINE`으로 시작합니다.
 - 실제 지도 서비스가 아닌 대한민국 개요 기반 좌표 화면을 사용합니다.
+- 공공 재난 알림 공급자는 구현되어 있으나 실제 호출에는 기관별 활용 승인, 정확한 호출 URL과 API 키가 필요합니다.
 - 초기 전국 관리자 비밀번호는 로컬 시연용이므로 배포 전에 반드시 변경해야 합니다.
 - HTTPS, MFA, 세션 쿠키, 상세 감사 로그와 백업은 아직 없습니다.
 - 실제 119·구조기관에 SOS를 자동 전달하지 않습니다.

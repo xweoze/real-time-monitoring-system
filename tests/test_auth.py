@@ -108,6 +108,39 @@ class AuthRepositoryTest(unittest.TestCase):
                 gender="INVALID",
             )
 
+    def test_member_list_update_and_delete(self):
+        seoul = self.repository.create_user(
+            "member_seoul", "password123", "서울 회원", "KR-11"
+        )
+        self.repository.create_user(
+            "member_busan", "password123", "부산 회원", "KR-26"
+        )
+
+        members = self.repository.list_members("KR-11")
+        self.assertEqual([member["id"] for member in members], [seoul["id"]])
+        self.assertEqual(
+            self.repository.member_ids(),
+            {seoul["id"], self.repository.list_members("KR-26")[0]["id"]},
+        )
+
+        updated = self.repository.update_member(
+            seoul["id"],
+            "수정된 회원",
+            "KR-41",
+            "2010-02-03",
+            "FEMALE",
+        )
+        self.assertEqual(updated["displayName"], "수정된 회원")
+        self.assertEqual(updated["regionId"], "KR-41")
+        self.assertEqual(updated["gender"], "FEMALE")
+
+        session = self.repository.login("member_seoul", "password123")
+        deleted = self.repository.delete_member(seoul["id"])
+        self.assertEqual(deleted["id"], seoul["id"])
+        self.assertIsNone(self.repository.get_user(seoul["id"]))
+        with self.assertRaises(AuthenticationError):
+            self.repository.authenticate(session["token"])
+
 
 if __name__ == "__main__":
     unittest.main()

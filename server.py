@@ -22,6 +22,7 @@ from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
 from auth import AuthRepository, AuthenticationError, AuthorizationError
+from public_data import PublicDataSynchronizer
 from regions import REGIONS, REGION_BY_ID
 
 
@@ -97,32 +98,18 @@ class MonitoringStore:
         self.client_by_user: dict[str, str] = {}
         self.routes: dict[str, list[dict]] = {}
         self.sos_events: dict[str, dict] = {}
+        self.public_alerts: dict[str, dict] = {}
+        self.public_alert_status = {
+            "connected": False,
+            "message": "공공데이터 동기화 대기",
+        }
         self.timeline: list[dict] = []
         self.subscribers: list[queue.Queue] = []
         self.sequence = 0
         self._persist_timer: Optional[threading.Timer] = None
         self._last_persist_at = 0.0
         self._dirty = False
-        self.danger_areas = [
-            {
-                "id": "AREA-01",
-                "name": "강남역 침수 위험 구역",
-                "regionId": "KR-11",
-                "lat": 37.4979,
-                "lng": 127.0276,
-                "radius": 320,
-                "severity": 5,
-            },
-            {
-                "id": "AREA-02",
-                "name": "한강 범람 주의 구역",
-                "regionId": "KR-11",
-                "lat": 37.5208,
-                "lng": 126.9931,
-                "radius": 420,
-                "severity": 4,
-            },
-        ]
+        self.danger_areas = []
         self._restore()
 
     def _restore(self) -> None:
@@ -134,6 +121,7 @@ class MonitoringStore:
         self.clients = state.get("clients", {})
         self.routes = state.get("routes", {})
         self.sos_events = state.get("sosEvents", {})
+        self.public_alerts = state.get("publicAlerts", {})
         self.timeline = state.get("timeline", [])[:100]
         self.sequence = int(state.get("sequence", 0))
         for client in self.clients.values():
@@ -149,6 +137,7 @@ class MonitoringStore:
             "clients": self.clients,
             "routes": self.routes,
             "sosEvents": self.sos_events,
+            "publicAlerts": self.public_alerts,
             "timeline": self.timeline,
             "sequence": self.sequence,
         }
@@ -385,6 +374,7 @@ class MonitoringStore:
     def snapshot(self, region_id: Optional[str] = None) -> dict:
         with self.lock:
             self._expire_stale_clients()
+            public_alerts = self.active_public_alerts(region_id)
             danger_areas = self.danger_areas
             sos_events = list(self.sos_events.values())
             timeline = self.timeline
@@ -412,12 +402,90 @@ class MonitoringStore:
                 ),
                 "timeline": timeline,
                 "regions": self._region_summaries(),
+                "publicAlerts": public_alerts,
+                "publicAlertStatus": dict(self.public_alert_status),
                 "serverTime": now(),
             }
 
+    def active_public_alerts(self, region_id: Optional[str] = None) -> list[dict]:
+        current = datetime.now(timezone.utc)
+        alerts = []
+        for alert in self.public_alerts.values():
+            if region_id and alert["regionId"] != region_id:
+                continue
+            expires_at = alert.get("expiresAt")
+            if expires_at and parse_time(expires_at) <= current:
+                continue
+            alerts.append(dict(alert))
+        return sorted(alerts, key=lambda item: item["issuedAt"], reverse=True)
+
+    def upsert_public_alerts(self, alerts: list[dict]) -> list[dict]:
+        if not isinstance(alerts, list):
+            raise ValueError("alerts는 배열이어야 합니다.")
+        normalized = []
+        with self.lock:
+            for item in alerts[:500]:
+                if not isinstance(item, dict):
+                    raise ValueError("각 공공 알림은 JSON 객체여야 합니다.")
+                region_id = str(item.get("regionId") or "")
+                if region_id not in REGION_BY_ID:
+                    raise ValueError("공공 알림의 regionId가 유효하지 않습니다.")
+                issued_at = str(item.get("issuedAt") or now())
+                parse_time(issued_at)
+                expires_at = item.get("expiresAt")
+                if expires_at:
+                    parse_time(str(expires_at))
+                severity = str(item.get("severity") or "INFO").upper()
+                if severity not in {"INFO", "ADVISORY", "WARNING", "CRITICAL"}:
+                    raise ValueError("공공 알림의 severity가 유효하지 않습니다.")
+                source = str(item.get("source") or "공공데이터")[:60]
+                source_id = str(item.get("sourceId") or item.get("id") or "")
+                if not source_id:
+                    raise ValueError("공공 알림의 sourceId가 필요합니다.")
+                alert_id = f"{source}:{source_id}"
+                alert = {
+                    "id": alert_id,
+                    "sourceId": source_id,
+                    "source": source,
+                    "regionId": region_id,
+                    "type": str(item.get("type") or "DISASTER")[:40],
+                    "severity": severity,
+                    "title": str(item.get("title") or "재난 안전 알림")[:120],
+                    "message": str(item.get("message") or "")[:1000],
+                    "issuedAt": issued_at,
+                    "expiresAt": str(expires_at) if expires_at else None,
+                    "sourceUrl": str(item.get("sourceUrl") or "")[:500],
+                    "syncedAt": now(),
+                }
+                self.public_alerts[alert_id] = alert
+                normalized.append(dict(alert))
+            if normalized:
+                self.public_alert_status = {
+                    "connected": True,
+                    "message": f"공공데이터 {len(normalized)}건 동기화",
+                }
+            self._publish("public-alerts", {"count": len(normalized)})
+            self._persist(force=True)
+        return normalized
+
+    def set_public_alert_status(self, status: dict) -> None:
+        with self.lock:
+            self.public_alert_status = {
+                "connected": bool(status.get("connected")),
+                "message": str(status.get("message") or "공공데이터 상태 미확인")[:300],
+            }
+            self._publish("public-alert-status", dict(self.public_alert_status))
+
     def _region_summaries(self) -> list[dict]:
         stats = {
-            region["id"]: {"total": 0, "online": 0, "danger": 0, "sos": 0}
+            region["id"]: {
+                "total": 0,
+                "online": 0,
+                "danger": 0,
+                "sos": 0,
+                "publicAlerts": 0,
+                "publicSeverity": "INFO",
+            }
             for region in REGIONS
         }
         for client in self.clients.values():
@@ -433,6 +501,12 @@ class MonitoringStore:
             client = self.clients.get(event["clientId"])
             if client and client.get("regionId") in stats:
                 stats[client["regionId"]]["sos"] += 1
+        severity_rank = {"INFO": 0, "ADVISORY": 1, "WARNING": 2, "CRITICAL": 3}
+        for alert in self.active_public_alerts():
+            region_stats = stats[alert["regionId"]]
+            region_stats["publicAlerts"] += 1
+            if severity_rank[alert["severity"]] > severity_rank[region_stats["publicSeverity"]]:
+                region_stats["publicSeverity"] = alert["severity"]
         return [{**region, **stats[region["id"]]} for region in REGIONS]
 
     def _expire_stale_clients(self) -> None:
@@ -478,8 +552,60 @@ class MonitoringStore:
                 }
             )
             self._rebuild_indexes()
+            self._publish("state", {"clientId": client_id})
             self._persist(force=True)
             return dict(client)
+
+    def remove_client_for_user(self, user_id: str) -> Optional[dict]:
+        with self.lock:
+            client_id = self.client_by_user.get(user_id)
+            if not client_id:
+                return None
+            client = self.clients.pop(client_id)
+            self.routes.pop(client_id, None)
+            self.sos_events = {
+                event_id: event
+                for event_id, event in self.sos_events.items()
+                if event.get("clientId") != client_id
+            }
+            self.timeline = [
+                event
+                for event in self.timeline
+                if event.get("clientId") != client_id
+            ]
+            self._rebuild_indexes()
+            event = self._log("MEMBER_DELETE", f"{client['name']} 회원 삭제")
+            self._publish("state", {"event": event, "clientId": client_id})
+            self._persist(force=True)
+            return dict(client)
+
+    def prune_orphan_clients(self, valid_user_ids: set[str]) -> list[str]:
+        with self.lock:
+            orphan_ids = [
+                client_id
+                for client_id, client in self.clients.items()
+                if not client.get("userId")
+                or client.get("userId") not in valid_user_ids
+            ]
+            if not orphan_ids:
+                return []
+            orphan_set = set(orphan_ids)
+            for client_id in orphan_ids:
+                self.clients.pop(client_id, None)
+                self.routes.pop(client_id, None)
+            self.sos_events = {
+                event_id: event
+                for event_id, event in self.sos_events.items()
+                if event.get("clientId") not in orphan_set
+            }
+            self.timeline = [
+                event
+                for event in self.timeline
+                if event.get("clientId") not in orphan_set
+            ]
+            self._rebuild_indexes()
+            self._persist(force=True)
+            return orphan_ids
 
     def subscribe(self) -> queue.Queue:
         subscriber: queue.Queue = queue.Queue(maxsize=20)
@@ -502,6 +628,10 @@ class MonitoringStore:
 REPOSITORY = SQLiteStateRepository(DATABASE_PATH)
 STORE = MonitoringStore(REPOSITORY)
 AUTH = AuthRepository(DATABASE_PATH)
+STORE.prune_orphan_clients(AUTH.member_ids())
+PUBLIC_DATA_SYNC = PublicDataSynchronizer.from_environment(
+    STORE.upsert_public_alerts, STORE.set_public_alert_status
+)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -516,6 +646,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._redirect("/monitor")
             if path == "/monitor":
                 return self._static("monitor.html")
+            if path == "/members":
+                return self._static("members.html")
             if path == "/app":
                 return self._static("app.html")
             if path.startswith("/static/"):
@@ -527,6 +659,30 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/operators":
                 self._user({"NATIONAL_ADMIN"})
                 return self._json({"operators": AUTH.list_operators()})
+            if path == "/api/members":
+                user = self._user({"NATIONAL_ADMIN", "REGIONAL_OPERATOR"})
+                region_id = query.get("region", [None])[0]
+                region_id = self._authorized_region(user, region_id)
+                members = AUTH.list_members(region_id)
+                clients = {
+                    client["userId"]: client
+                    for client in STORE.snapshot(region_id)["clients"]
+                    if client.get("userId")
+                }
+                return self._json(
+                    {
+                        "members": [
+                            {
+                                **member,
+                                "connectionStatus": clients.get(
+                                    member["id"], {}
+                                ).get("connectionStatus", "OFFLINE"),
+                                "clientId": clients.get(member["id"], {}).get("id"),
+                            }
+                            for member in members
+                        ]
+                    }
+                )
             if path == "/api/state":
                 user = self._user({"NATIONAL_ADMIN", "REGIONAL_OPERATOR"})
                 region_id = query.get("region", [None])[0]
@@ -597,6 +753,46 @@ class Handler(BaseHTTPRequestHandler):
                     role="REGIONAL_OPERATOR",
                 )
                 return self._json({"operator": operator}, HTTPStatus.CREATED)
+            match = re.fullmatch(r"/api/members/([^/]+)", path)
+            if match:
+                user = self._user({"NATIONAL_ADMIN", "REGIONAL_OPERATOR"})
+                member = AUTH.get_user(match.group(1))
+                self._authorize_member(user, member)
+                requested_region = str(payload.get("regionId") or "")
+                if (
+                    user["role"] == "REGIONAL_OPERATOR"
+                    and requested_region != user["regionId"]
+                ):
+                    raise AuthorizationError(
+                        "회원을 담당 지역 밖으로 이동할 수 없습니다."
+                    )
+                member = AUTH.update_member(
+                    match.group(1),
+                    payload.get("displayName", ""),
+                    requested_region,
+                    payload.get("birthDate"),
+                    payload.get("gender", "UNDISCLOSED"),
+                )
+                client = STORE.client_for_user(member["id"])
+                if client:
+                    STORE.sync_client_profile(client["id"], member)
+                return self._json({"member": member})
+            if path == "/api/public-alerts":
+                self._user({"NATIONAL_ADMIN"})
+                alerts = STORE.upsert_public_alerts(payload.get("alerts", []))
+                return self._json(
+                    {"alerts": alerts, "count": len(alerts)},
+                    HTTPStatus.CREATED,
+                )
+            if path == "/api/public-alerts/sync":
+                self._user({"NATIONAL_ADMIN"})
+                count = PUBLIC_DATA_SYNC.sync_once()
+                return self._json(
+                    {
+                        "count": count,
+                        "status": dict(STORE.public_alert_status),
+                    }
+                )
             if path == "/api/clients":
                 user = self._user({"USER"})
                 existing = STORE.client_for_user(user["id"])
@@ -651,6 +847,25 @@ class Handler(BaseHTTPRequestHandler):
         except KeyError as exc:
             self._error(HTTPStatus.NOT_FOUND, str(exc).strip("'"))
 
+    def do_DELETE(self) -> None:
+        path = urlparse(self.path).path
+        try:
+            match = re.fullmatch(r"/api/members/([^/]+)", path)
+            if not match:
+                return self._error(HTTPStatus.NOT_FOUND, "API를 찾을 수 없습니다.")
+            user = self._user({"NATIONAL_ADMIN", "REGIONAL_OPERATOR"})
+            member = AUTH.get_user(match.group(1))
+            self._authorize_member(user, member)
+            deleted = AUTH.delete_member(match.group(1))
+            STORE.remove_client_for_user(deleted["id"])
+            self._json({"deleted": deleted})
+        except AuthenticationError as exc:
+            self._error(HTTPStatus.UNAUTHORIZED, str(exc))
+        except AuthorizationError as exc:
+            self._error(HTTPStatus.FORBIDDEN, str(exc))
+        except KeyError as exc:
+            self._error(HTTPStatus.NOT_FOUND, str(exc).strip("'"))
+
     def _body(self) -> dict:
         length = int(self.headers.get("Content-Length", "0"))
         if length > 1_000_000:
@@ -692,6 +907,15 @@ class Handler(BaseHTTPRequestHandler):
             and client.get("regionId") != user["regionId"]
         ):
             raise AuthorizationError("담당 지역 밖의 단말에는 접근할 수 없습니다.")
+
+    def _authorize_member(self, user: dict, member: Optional[dict]) -> None:
+        if not member or member["role"] != "USER":
+            raise KeyError("회원을 찾을 수 없습니다.")
+        if (
+            user["role"] == "REGIONAL_OPERATOR"
+            and member.get("regionId") != user["regionId"]
+        ):
+            raise AuthorizationError("담당 지역 밖의 회원은 관리할 수 없습니다.")
 
     def _json(self, data: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -752,6 +976,14 @@ class Handler(BaseHTTPRequestHandler):
 
 def run(host: str = HOST, port: int = PORT) -> None:
     server = ThreadingHTTPServer((host, port), Handler)
+    PUBLIC_DATA_SYNC.start()
+    if not PUBLIC_DATA_SYNC.enabled_providers():
+        STORE.set_public_alert_status(
+            {
+                "connected": False,
+                "message": "공공데이터 API URL 또는 키 미설정",
+            }
+        )
     local_host = "127.0.0.1"
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
@@ -769,6 +1001,7 @@ def run(host: str = HOST, port: int = PORT) -> None:
     except KeyboardInterrupt:
         print("\nServer stopped.")
     finally:
+        PUBLIC_DATA_SYNC.stop()
         STORE.flush()
         server.server_close()
 

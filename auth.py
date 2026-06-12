@@ -68,6 +68,7 @@ class AuthRepository:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
     @staticmethod
@@ -276,3 +277,94 @@ class AuthRepository:
                 """
             ).fetchall()
         return [self._public_user(row) for row in rows]
+
+    def get_user(self, user_id: str) -> Optional[dict]:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+        return self._public_user(row) if row else None
+
+    def list_members(self, region_id: Optional[str] = None) -> list[dict]:
+        parameters = []
+        where = "WHERE role = 'USER'"
+        if region_id:
+            if region_id not in REGION_BY_ID:
+                raise ValueError("유효한 지역을 선택해 주세요.")
+            where += " AND region_id = ?"
+            parameters.append(region_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM users
+                {where}
+                ORDER BY created_at DESC, display_name
+                """,
+                parameters,
+            ).fetchall()
+        return [self._public_user(row) for row in rows]
+
+    def member_ids(self) -> set[str]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT id FROM users WHERE role = 'USER'"
+            ).fetchall()
+        return {row["id"] for row in rows}
+
+    def update_member(
+        self,
+        user_id: str,
+        display_name: str,
+        region_id: str,
+        birth_date: Optional[str] = None,
+        gender: str = "UNDISCLOSED",
+    ) -> dict:
+        display_name = str(display_name or "").strip()
+        if not display_name or len(display_name) > 30:
+            raise ValueError("표시 이름은 1~30자로 입력해 주세요.")
+        if region_id not in REGION_BY_ID:
+            raise ValueError("유효한 지역을 선택해 주세요.")
+        gender = str(gender or "UNDISCLOSED").upper()
+        if gender not in {"FEMALE", "MALE", "OTHER", "UNDISCLOSED"}:
+            raise ValueError("유효한 성별 값을 선택해 주세요.")
+        birth_date = str(birth_date or "").strip() or None
+        if birth_date:
+            try:
+                parsed_birth_date = datetime.strptime(birth_date, "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise ValueError("생년월일 형식이 올바르지 않습니다.") from exc
+            today = datetime.now(timezone.utc).date()
+            if parsed_birth_date > today:
+                raise ValueError("생년월일은 미래 날짜일 수 없습니다.")
+            if parsed_birth_date.year < today.year - 130:
+                raise ValueError("생년월일을 다시 확인해 주세요.")
+
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM users WHERE id = ? AND role = 'USER'", (user_id,)
+            ).fetchone()
+            if not row:
+                raise KeyError("회원을 찾을 수 없습니다.")
+            connection.execute(
+                """
+                UPDATE users
+                SET display_name = ?, region_id = ?, birth_date = ?, gender = ?
+                WHERE id = ?
+                """,
+                (display_name, region_id, birth_date, gender, user_id),
+            )
+            updated = connection.execute(
+                "SELECT * FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+        return self._public_user(updated)
+
+    def delete_member(self, user_id: str) -> dict:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM users WHERE id = ? AND role = 'USER'", (user_id,)
+            ).fetchone()
+            if not row:
+                raise KeyError("회원을 찾을 수 없습니다.")
+            member = self._public_user(row)
+            connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        return member

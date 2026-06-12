@@ -58,6 +58,28 @@ const logoutSession = async () => {
   }
 };
 
+const setupMainMenu = () => {
+  const button = document.querySelector("#menuBtn");
+  const menu = document.querySelector("#mainMenu");
+  if (!button || !menu) return;
+
+  const close = () => {
+    menu.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+  };
+  button.addEventListener("click", event => {
+    event.stopPropagation();
+    const willOpen = menu.hidden;
+    menu.hidden = !willOpen;
+    button.setAttribute("aria-expanded", String(willOpen));
+  });
+  menu.addEventListener("click", event => event.stopPropagation());
+  document.addEventListener("click", close);
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape") close();
+  });
+};
+
 const ago = value => {
   if (!value) return "-";
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));

@@ -1,0 +1,70 @@
+body {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(41,112,174,.18), transparent 30%),
+    radial-gradient(circle at 90% 30%, rgba(32,181,168,.09), transparent 28%), #07111f;
+}
+.shell { max-width: 1440px; margin: auto; padding: 0 28px 50px; }
+header {
+  height: 82px; display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand .logo {
+  width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px;
+  background: linear-gradient(145deg, #43d8d0, #2877e8); color: #06101d; font-weight: 1000;
+}
+.brand b { display: block; letter-spacing: .12em; }
+.brand span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+.header-meta { display: flex; align-items: center; gap: 18px; color: #d9e8f5; font-size: 12px; }
+.text-button { padding: 0; color: var(--cyan); background: transparent; }
+main { padding-top: 30px; }
+.page-title { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
+.page-title h1 { margin: 7px 0 5px; font-size: 28px; }
+.page-title p { margin: 0; color: var(--muted); font-size: 13px; }
+.stats { display: flex; gap: 12px; }
+.stats article { min-width: 130px; padding: 15px 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.stats span { display: block; color: var(--muted); font-size: 11px; }
+.stats strong { display: block; margin-top: 5px; font-size: 24px; }
+.member-panel { overflow: hidden; }
+.toolbar { display: flex; gap: 10px; padding: 18px 20px; }
+.toolbar input, .toolbar select, .edit-card input, .edit-card select, .auth-card input {
+  padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px;
+  color: white; background: #0b192a; outline: 0;
+}
+.toolbar input { flex: 1; min-width: 220px; }
+.toolbar select { width: 210px; }
+.table-wrap { overflow: auto; }
+table { width: 100%; min-width: 900px; border-collapse: collapse; font-size: 12px; }
+th { padding: 12px 18px; color: var(--muted); font-size: 10px; font-weight: 500; text-align: left; border-block: 1px solid var(--line); }
+td { padding: 15px 18px; border-bottom: 1px solid rgba(164,190,218,.07); }
+tbody tr:hover { background: rgba(255,255,255,.025); }
+.identity b, .identity span { display: block; }
+.identity span, .profile-detail { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
+.status.online { color: var(--green); }
+.status:not(.online) .status-dot { background: #66788b; box-shadow: none; }
+.row-actions { display: flex; gap: 7px; }
+.row-actions button { padding: 7px 10px; border-radius: 8px; color: white; background: #1a3450; font-size: 10px; }
+.row-actions .delete { color: #ffadb4; background: rgba(255,93,108,.12); }
+.modal-overlay, .auth-overlay {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center;
+  padding: 20px; background: rgba(3,8,14,.88); backdrop-filter: blur(12px);
+}
+.modal-overlay[hidden], .auth-overlay[hidden] { display: none; }
+.edit-card, .auth-card { width: min(100%, 440px); padding: 26px; }
+.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.modal-head h2 { margin: 5px 0 0; }
+.close-button { width: 34px; height: 34px; border-radius: 9px; color: var(--muted); background: rgba(255,255,255,.05); }
+.edit-card label, .auth-card label { display: block; margin: 14px 0; color: var(--muted); font-size: 11px; }
+.edit-card input, .edit-card select, .auth-card input { display: block; width: 100%; margin-top: 7px; }
+.edit-card input:disabled { color: #70859b; }
+.modal-actions { display: flex; justify-content: end; gap: 8px; margin-top: 20px; }
+.auth-card p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.auth-card .btn { width: 100%; }
+@media (max-width: 700px) {
+  .shell { padding: 0 12px 30px; }
+  .page-title { align-items: stretch; flex-direction: column; }
+  .stats article { flex: 1; min-width: 0; }
+  .toolbar { flex-wrap: wrap; }
+  .toolbar input, .toolbar select { width: 100%; }
+}

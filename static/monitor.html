@@ -10,7 +10,17 @@
 <body>
   <div class="shell">
     <header>
-      <div class="brand"><div class="logo">R</div><div><b>RTLS</b><span>재난 안전 관제센터</span></div></div>
+      <div class="brand-area">
+        <button id="menuBtn" class="menu-button" type="button" aria-label="주 메뉴 열기" aria-expanded="false">
+          <span></span><span></span><span></span>
+        </button>
+        <nav id="mainMenu" class="main-menu" hidden>
+          <a class="active" href="/monitor">관제 대시보드</a>
+          <a href="/members">정보 수정 관리</a>
+          <button id="operatorMenuBtn" type="button" hidden>지역 관리자 관리</button>
+        </nav>
+        <div class="brand"><div class="logo">R</div><div><b>RTLS</b><span>재난 안전 관제센터</span></div></div>
+      </div>
       <div class="header-meta">
         <select id="regionFilter" title="관제 지역" hidden><option value="">전국 관제</option></select>
         <span id="streamPill" class="pill"><i class="status-dot offline"></i> 연결 중</span>
@@ -26,7 +36,9 @@
         <article><span>접속 사용자</span><strong id="onlineCount">0</strong><small>ONLINE</small></article>
         <article><span>위험 감지</span><strong id="dangerCount">0</strong><small>DANGER</small></article>
         <article class="critical"><span>미처리 SOS</span><strong id="sosCount">0</strong><small>PRIORITY</small></article>
-        <article><span>금일 이벤트</span><strong id="eventCount">0</strong><small>EVENTS</small></article>
+        <article id="todayEventsCard" class="clickable" role="button" tabindex="0" aria-label="금일 이벤트 상세 보기">
+          <span>금일 이벤트</span><strong id="eventCount">0</strong><small>EVENTS · 상세 보기</small>
+        </article>
       </section>
 
       <section class="workspace">
@@ -46,7 +58,7 @@
 
         <aside class="side">
           <section class="panel alert-panel">
-            <div class="panel-title"><div><span class="eyebrow">Priority Queue</span><h2>활성 알림</h2></div><span id="alertBadge" class="count-badge">0</span></div>
+            <div class="panel-title"><div><span class="eyebrow">Priority Queue</span><h2>활성 알림</h2><small id="publicAlertStatus" class="source-status">공공데이터 확인 중</small></div><span id="alertBadge" class="count-badge">0</span></div>
             <div id="alerts" class="alert-list"><p class="empty">활성 알림이 없습니다.</p></div>
           </section>
           <section class="panel detail-panel">
@@ -67,17 +79,6 @@
         </section>
       </section>
 
-      <section id="operatorPanel" class="panel operator-panel" hidden>
-        <div class="panel-title"><div><span class="eyebrow">Regional Accounts</span><h2>지역 관제 관리자</h2></div></div>
-        <form id="operatorForm">
-          <input id="operatorUsername" placeholder="관리자 아이디" required>
-          <input id="operatorPassword" type="password" placeholder="비밀번호 8자 이상" required>
-          <input id="operatorDisplayName" placeholder="표시 이름" required>
-          <select id="operatorRegion"></select>
-          <button class="btn btn-primary">지역 관리자 생성</button>
-        </form>
-        <div id="operatorList" class="operator-list"></div>
-      </section>
     </main>
   </div>
   <div id="authOverlay" class="auth-overlay">
@@ -90,6 +91,32 @@
       <button class="btn btn-primary">로그인</button>
       <small>초기 전국 관리자: national_admin / admin1234</small>
     </form>
+  </div>
+  <div id="eventsOverlay" class="events-overlay" hidden>
+    <section class="panel events-card" role="dialog" aria-modal="true" aria-labelledby="eventsTitle">
+      <div class="events-head">
+        <div><span class="eyebrow">Today's Event Log</span><h2 id="eventsTitle">금일 이벤트 상세</h2></div>
+        <button id="closeEventsBtn" class="close-button" type="button" aria-label="닫기">X</button>
+      </div>
+      <div id="todayEventsList" class="today-events-list"></div>
+    </section>
+  </div>
+  <div id="operatorOverlay" class="operator-overlay" hidden>
+    <section class="panel operator-card" role="dialog" aria-modal="true" aria-labelledby="operatorTitle">
+      <div class="operator-head">
+        <div><span class="eyebrow">Regional Accounts</span><h2 id="operatorTitle">지역 관리자 관리</h2></div>
+        <button id="closeOperatorBtn" class="close-button" type="button" aria-label="닫기">X</button>
+      </div>
+      <form id="operatorForm">
+        <label>관리자 아이디<input id="operatorUsername" placeholder="영문·숫자 4자 이상" required></label>
+        <label>비밀번호<input id="operatorPassword" type="password" placeholder="8자 이상" required></label>
+        <label>표시 이름<input id="operatorDisplayName" placeholder="예: 서울 관제 관리자" required></label>
+        <label>담당 지역<select id="operatorRegion"></select></label>
+        <button class="btn btn-primary">지역 관리자 생성</button>
+      </form>
+      <div class="operator-list-head"><b>등록된 지역 관리자</b></div>
+      <div id="operatorList" class="operator-list"></div>
+    </section>
   </div>
   <div id="toast" class="toast"></div>
   <script src="/static/shared.js"></script>

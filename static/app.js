@@ -294,11 +294,6 @@ document.querySelector("#logoutBtn").onclick = logout;
 document.querySelector("#connectBtn").onclick = connect;
 document.querySelector("#locateBtn").onclick = locate;
 document.querySelector("#sendBtn").onclick = () => sendLocation();
-document.querySelector("#simulateBtn").onclick = () => {
-  document.querySelector("#latInput").value = "37.49790";
-  document.querySelector("#lngInput").value = "127.02760";
-  sendLocation();
-};
 document.querySelector("#confirmDanger").onclick = () => {
   document.querySelector("#dangerModal").hidden = true;
 };

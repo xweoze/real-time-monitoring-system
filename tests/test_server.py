@@ -57,12 +57,54 @@ class MonitoringStoreTest(unittest.TestCase):
         self.assertIn(client["id"], self.store.clients_by_region["KR-26"])
         self.assertNotIn(client["id"], self.store.clients_by_region["KR-11"])
 
+    def test_member_client_can_be_removed_with_related_data(self):
+        client = self.store.register(
+            {"name": "삭제 회원", "userId": "U-DELETE", "regionId": "KR-11"}
+        )
+        self.store.update_location(
+            client["id"], {"lat": 37.512, "lng": 127.010}
+        )
+        self.store.create_sos(client["id"], {"message": "삭제 전 SOS"})
+
+        removed = self.store.remove_client_for_user("U-DELETE")
+
+        self.assertEqual(removed["id"], client["id"])
+        self.assertIsNone(self.store.client_for_user("U-DELETE"))
+        self.assertNotIn(client["id"], self.store.routes)
+        self.assertFalse(
+            any(
+                event.get("clientId") == client["id"]
+                for event in self.store.sos_events.values()
+            )
+        )
+
+    def test_orphan_clients_are_pruned(self):
+        valid = self.store.register(
+            {"name": "정상 회원", "userId": "U-VALID", "regionId": "KR-11"}
+        )
+        legacy = self.store.register(
+            {"name": "과거 단말", "regionId": "KR-11"}
+        )
+        deleted = self.store.register(
+            {"name": "삭제 회원", "userId": "U-DELETED", "regionId": "KR-26"}
+        )
+
+        removed = self.store.prune_orphan_clients({"U-VALID"})
+
+        self.assertEqual(
+            set(removed), {self.client["id"], legacy["id"], deleted["id"]}
+        )
+        self.assertEqual(
+            [client["id"] for client in self.store.snapshot()["clients"]],
+            [valid["id"]],
+        )
+
     def test_danger_detection(self):
         updated = self.store.update_location(
             self.client["id"], {"lat": 37.4979, "lng": 127.0276, "accuracy": 3}
         )
-        self.assertEqual(updated["dangerState"], "DANGER")
-        self.assertEqual(updated["dangerArea"]["id"], "AREA-01")
+        self.assertEqual(updated["dangerState"], "SAFE")
+        self.assertIsNone(updated["dangerArea"])
 
     def test_sos_lifecycle(self):
         self.store.update_location(self.client["id"], {"lat": 37.512, "lng": 127.010})
@@ -141,6 +183,59 @@ class MonitoringStoreTest(unittest.TestCase):
         self.assertEqual(store.client_for_user("U-1")["id"], client["id"])
         store.flush()
         self.assertEqual(repository.save_count, 2)
+
+    def test_public_alerts_are_upserted_and_filtered_by_region(self):
+        alerts = self.store.upsert_public_alerts(
+            [
+                {
+                    "sourceId": "seoul-001",
+                    "source": "공공데이터 테스트",
+                    "regionId": "KR-11",
+                    "type": "HEAVY_RAIN",
+                    "severity": "WARNING",
+                    "title": "서울 호우주의보",
+                    "message": "저지대 접근에 주의하세요.",
+                    "issuedAt": "2026-06-12T01:00:00+00:00",
+                },
+                {
+                    "sourceId": "busan-001",
+                    "source": "공공데이터 테스트",
+                    "regionId": "KR-26",
+                    "severity": "ADVISORY",
+                    "title": "부산 강풍 예비특보",
+                    "issuedAt": "2026-06-12T02:00:00+00:00",
+                },
+            ]
+        )
+
+        self.assertEqual(len(alerts), 2)
+        self.assertEqual(
+            [alert["title"] for alert in self.store.snapshot("KR-11")["publicAlerts"]],
+            ["서울 호우주의보"],
+        )
+        seoul = next(
+            region
+            for region in self.store.snapshot()["regions"]
+            if region["id"] == "KR-11"
+        )
+        self.assertEqual(seoul["publicAlerts"], 1)
+        self.assertEqual(seoul["publicSeverity"], "WARNING")
+
+    def test_expired_public_alert_is_hidden(self):
+        self.store.upsert_public_alerts(
+            [
+                {
+                    "sourceId": "expired-001",
+                    "regionId": "KR-11",
+                    "severity": "INFO",
+                    "title": "만료 알림",
+                    "issuedAt": "2020-01-01T00:00:00+00:00",
+                    "expiresAt": "2020-01-02T00:00:00+00:00",
+                }
+            ]
+        )
+
+        self.assertEqual(self.store.snapshot("KR-11")["publicAlerts"], [])
 
 
 if __name__ == "__main__":

@@ -19,6 +19,24 @@
 body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); }
 button, input, select, textarea { font: inherit; }
 button { border: 0; cursor: pointer; }
+.brand-area { position: relative; display: flex; align-items: center; gap: 10px; }
+.menu-button {
+  width: 38px; height: 38px; display: grid; place-content: center; gap: 4px;
+  border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.035);
+}
+.menu-button span { width: 17px; height: 2px; border-radius: 2px; background: var(--text); }
+.main-menu {
+  position: absolute; z-index: 80; top: 48px; left: 0; width: 220px; padding: 8px;
+  border: 1px solid var(--line); border-radius: 14px; background: #102238;
+  box-shadow: var(--shadow);
+}
+.main-menu[hidden] { display: none; }
+.main-menu button[hidden] { display: none; }
+.main-menu a, .main-menu button {
+  display: block; padding: 11px 12px; border-radius: 9px; color: var(--muted);
+  width: 100%; background: transparent; font-size: 13px; text-align: left; text-decoration: none;
+}
+.main-menu a:hover, .main-menu a.active, .main-menu button:hover { color: white; background: rgba(65,217,207,.1); }
 .muted { color: var(--muted); }
 .eyebrow {
   color: var(--cyan); font-size: 11px; font-weight: 800; letter-spacing: .16em;

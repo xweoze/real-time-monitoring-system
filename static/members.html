@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RTLS 회원 정보 관리</title>
+  <link rel="stylesheet" href="/static/common.css">
+  <link rel="stylesheet" href="/static/members.css">
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand-area">
+        <button id="menuBtn" class="menu-button" type="button" aria-label="주 메뉴 열기" aria-expanded="false">
+          <span></span><span></span><span></span>
+        </button>
+        <nav id="mainMenu" class="main-menu" hidden>
+          <a href="/monitor">관제 대시보드</a>
+          <a class="active" href="/members">정보 수정 관리</a>
+        </nav>
+        <div class="brand"><div class="logo">R</div><div><b>RTLS</b><span>회원 정보 관리</span></div></div>
+      </div>
+      <div class="header-meta">
+        <span id="operatorName"></span>
+        <button id="logoutBtn" class="text-button">로그아웃</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="page-title">
+        <div>
+          <span class="eyebrow">Member Administration</span>
+          <h1>정보 수정 관리</h1>
+          <p>가입 회원의 기본 정보와 담당 지역을 수정하거나 계정을 삭제합니다.</p>
+        </div>
+        <div class="stats">
+          <article><span>전체 회원</span><strong id="totalCount">0</strong></article>
+          <article><span>현재 접속</span><strong id="onlineCount">0</strong></article>
+        </div>
+      </section>
+
+      <section class="panel member-panel">
+        <div class="toolbar">
+          <input id="searchInput" type="search" placeholder="이름 또는 아이디 검색">
+          <select id="regionFilter"><option value="">전체 지역</option></select>
+          <button id="refreshBtn" class="btn">새로고침</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>회원</th><th>보호 정보</th><th>지역</th><th>접속</th><th>가입일</th><th>관리</th></tr>
+            </thead>
+            <tbody id="memberRows"></tbody>
+          </table>
+        </div>
+        <p id="emptyState" class="empty" hidden>조건에 맞는 회원이 없습니다.</p>
+      </section>
+    </main>
+  </div>
+
+  <div id="editOverlay" class="modal-overlay" hidden>
+    <form id="editForm" class="panel edit-card">
+      <div class="modal-head">
+        <div><span class="eyebrow">Edit Member</span><h2>회원 정보 수정</h2></div>
+        <button id="closeEditBtn" class="close-button" type="button" aria-label="닫기">X</button>
+      </div>
+      <label>아이디<input id="editUsername" disabled></label>
+      <label>이름<input id="editDisplayName" maxlength="30" required></label>
+      <label>생년월일<input id="editBirthDate" type="date"></label>
+      <label>성별
+        <select id="editGender">
+          <option value="UNDISCLOSED">응답하지 않음</option>
+          <option value="FEMALE">여성</option>
+          <option value="MALE">남성</option>
+          <option value="OTHER">기타</option>
+        </select>
+      </label>
+      <label>관리 지역<select id="editRegion" required></select></label>
+      <div class="modal-actions">
+        <button id="cancelEditBtn" class="btn" type="button">취소</button>
+        <button class="btn btn-primary" type="submit">수정 저장</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="authOverlay" class="auth-overlay" hidden>
+    <form id="memberLogin" class="panel auth-card">
+      <span class="eyebrow">Administrator Access</span>
+      <h1>관리자 로그인</h1>
+      <p>회원 정보 관리를 위해 관제 관리자 계정으로 로그인하세요.</p>
+      <label>아이디<input id="loginUsername" autocomplete="username"></label>
+      <label>비밀번호<input id="loginPassword" type="password" autocomplete="current-password"></label>
+      <button class="btn btn-primary">로그인</button>
+    </form>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="/static/shared.js"></script>
+  <script src="/static/members.js"></script>
+</body>
+</html>
