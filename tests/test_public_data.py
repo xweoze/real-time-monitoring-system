@@ -1,9 +1,13 @@
+import os
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from public_data import (
     DisasterMessageProvider,
     PublicDataSynchronizer,
     WeatherWarningProvider,
+    load_environment_file,
     normalize_datetime,
     region_ids_from_text,
 )
@@ -36,6 +40,23 @@ class StubWeatherProvider(WeatherWarningProvider):
 
 
 class PublicDataProviderTest(unittest.TestCase):
+    def test_environment_file_is_loaded_without_overriding_existing_values(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / ".env"
+            path.write_text(
+                "export RTLS_TEST_ENV='loaded value'\n"
+                "RTLS_TEST_KEEP=from-file\n",
+                encoding="utf-8",
+            )
+            os.environ["RTLS_TEST_KEEP"] = "existing"
+            try:
+                load_environment_file(path)
+                self.assertEqual(os.environ["RTLS_TEST_ENV"], "loaded value")
+                self.assertEqual(os.environ["RTLS_TEST_KEEP"], "existing")
+            finally:
+                os.environ.pop("RTLS_TEST_ENV", None)
+                os.environ.pop("RTLS_TEST_KEEP", None)
+
     def test_region_mapping(self):
         self.assertEqual(
             region_ids_from_text("서울특별시, 인천광역시"),

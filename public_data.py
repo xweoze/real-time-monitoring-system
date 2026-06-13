@@ -4,17 +4,38 @@ import json
 import hashlib
 import os
 import re
+import shlex
 import threading
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Callable, Optional
 
 from regions import REGIONS
 
 
 KST = timezone(timedelta(hours=9))
+
+
+def load_environment_file(path: Path) -> None:
+    if not path.is_file():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line.removeprefix("export ").strip()
+        key, separator, raw_value = line.partition("=")
+        if not separator or not key.strip():
+            continue
+        try:
+            values = shlex.split(raw_value, comments=True, posix=True)
+        except ValueError:
+            continue
+        os.environ.setdefault(key.strip(), values[0] if values else "")
 
 REGION_ALIASES = {
     "서울": "KR-11",
@@ -401,21 +422,19 @@ class PublicDataSynchronizer:
             return 0
         total = 0
         errors = []
+        successes = []
         for provider in providers:
             try:
                 alerts = provider.fetch()
                 self.upsert(alerts)
                 total += len(alerts)
+                successes.append(f"{provider.name} {len(alerts)}건")
             except Exception:
-                errors.append(f"{provider.name}: 연결 또는 응답 변환 실패")
+                errors.append(f"{provider.name} 연결 실패")
         self.status_callback(
             {
-                "connected": not errors,
-                "message": (
-                    f"공공데이터 {total}건 동기화"
-                    if not errors
-                    else " / ".join(errors)[:300]
-                ),
+                "connected": bool(successes),
+                "message": " / ".join(successes + errors)[:300],
             }
         )
         return total

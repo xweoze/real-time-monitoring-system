@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>RTLS 관제센터</title>
   <link rel="stylesheet" href="/static/common.css">
+  <link rel="stylesheet" href="/static/vendor/leaflet.css">
   <link rel="stylesheet" href="/static/monitor.css">
 </head>
 <body>
@@ -47,13 +48,7 @@
             <div><span class="eyebrow">National Situation Map</span><h1 id="mapTitle">대한민국 통합 관제 지도</h1></div>
             <div class="legend"><span><i class="safe"></i>안전</span><span><i class="danger"></i>위험</span><span><i class="sos"></i>SOS</span></div>
           </div>
-          <div id="map" class="map">
-            <div class="grid"></div>
-            <svg id="geographyLayer" class="korea-shape" viewBox="0 0 1000 620" preserveAspectRatio="none" aria-hidden="true"></svg>
-            <div id="regionMarkers"></div><div id="areas"></div>
-            <svg id="routeLayer" viewBox="0 0 1000 620" preserveAspectRatio="none"></svg><div id="markers"></div>
-            <div class="map-scale"><span></span> 전국 17개 시·도 연동</div>
-          </div>
+          <div id="map" class="map" aria-label="대한민국 17개 시·도 관제 지도"></div>
         </div>
 
         <aside class="side">
@@ -120,6 +115,8 @@
   </div>
   <div id="toast" class="toast"></div>
   <script src="/static/shared.js"></script>
+  <script src="/static/vendor/leaflet.js"></script>
+  <script src="/static/vendor/topojson-client.min.js"></script>
   <script src="/static/monitor.js"></script>
 </body>
 </html>

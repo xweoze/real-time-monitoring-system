@@ -52,6 +52,12 @@
 <td>이해관계자, 개인정보 및 운영 범위 보완</td>
 <td>김지훈</td>
 </tr>
+<tr align="center">
+<td>2026-06-13</td>
+<td>1.20</td>
+<td>계정·지역 권한·회원 관리·공공데이터 기능 반영</td>
+<td>김지훈</td>
+</tr>
 </table>
 
 
@@ -132,6 +138,10 @@
 - 긴급 상황 발생 시 SOS 요청을 전송할 수 있다  
 - 관제자는 모든 사용자의 위치와 상태를 실시간으로 확인한다  
 - 특정 사용자의 이동 경로를 분석하여 위험도를 판단할 수 있다  
+- 사용자는 회원가입과 로그인을 통해 자신의 단말만 연결한다
+- 전국 관리자는 지역 관리자와 전체 회원을 관리한다
+- 지역 관리자는 담당 지역 회원과 이벤트만 확인한다
+- 공공데이터의 지역별 재난·기상 알림을 관제 화면에서 확인한다
 
 ---
 
@@ -159,6 +169,8 @@
 | Client User | 위치 공유 여부를 선택하고 위험 경고 및 SOS 기능을 사용 |
 | Guardian | 사용자 동의를 전제로 안전 상태와 대응 결과를 확인 |
 | Monitoring Operator | 위험 및 SOS 이벤트를 확인하고 구조 지원 절차 수행 |
+| Regional Operator | 담당 지역의 회원, 위험, SOS와 공공 알림을 관제 |
+| National Administrator | 전체 회원 정보와 지역 관리자 계정을 관리 |
 | System Administrator | 서버, 계정, 보안, 데이터 보존과 장애 복구 관리 |
 | Rescue Organization | 운영 기관과 사전 협의된 경우에만 구조 정보를 전달받음 |
 
@@ -169,7 +181,11 @@
 - 사용자는 위치 수집 목적과 보존 범위를 안내받고 위치 공유에 동의해야 한다.
 - 사용자는 언제든 위치 공유를 종료할 수 있어야 한다.
 - 서버 상태는 SQLite에 저장되어 재시작 후 복구되며, 복구된 사용자는 안전하게 `OFFLINE` 상태로 시작한다.
-- 현재 지도는 시연용 좌표 화면이며 실제 GIS 지도와 도로 정보를 제공하지 않는다.
+- 사용자 계정, 비밀번호 해시와 로그인 세션은 SQLite에 저장한다.
+- 계정이 없거나 삭제된 사용자와 연결된 과거 단말 데이터는 자동 정리한다.
+- 현재 지도는 Leaflet과 통계청 SGIS의 2018년 시·도 경계를 사용한다. 실제
+  위·경도 배치는 지원하지만 최신 행정 경계, 도로, 건물과 주소 검색은 제공하지 않는다.
+- 공공데이터는 기관의 활용 승인, 실제 호출 URL과 인증키가 설정된 경우에만 동기화한다.
 - 다수 사용자 처리 성능은 부하 테스트 전까지 목표값으로만 관리한다.
 
 ---
@@ -186,11 +202,15 @@ flowchart LR
     Client[Client App]
     Server[RTLS Server]
     Monitor[Monitoring Operator]
+    Admin[National Administrator]
+    PublicData[Public Data API]
 
-    Client -->|Register / Location / SOS / Disconnect| Server
-    Server -->|Client ID / Danger Alert / Result| Client
-    Server -->|State Snapshot / SSE Event / Route| Monitor
+    Client -->|Signup / Login / Location / SOS / Logout| Server
+    Server -->|Session / Danger Alert / Result| Client
+    Server -->|Regional Snapshot / SSE Event / Route| Monitor
     Monitor -->|Route Request / SOS Status Update| Server
+    Admin -->|Member and Regional Operator Management| Server
+    PublicData -->|Weather and Disaster Alerts| Server
 ```
 
 - Connect : 접속  
@@ -214,7 +234,7 @@ flowchart LR
 ### 3.1. System Connect
 | Actor | Client |
 |------|--------|
-| Description | 사용자가 시스템에 접속하면 고유 ID를 부여받는다. |
+| Description | 사용자가 회원가입 또는 로그인 후 계정과 연결된 관제 단말로 접속한다. |
 
 
 ### 3.2. Send Location & State
@@ -262,7 +282,22 @@ flowchart LR
 ### 3.9. System Exit
 | Actor | Client |
 |------|--------|
-| Description | 사용자가 시스템 접속을 종료한다. |
+| Description | 사용자가 위치 공유 연결을 종료하거나 계정에서 로그아웃한다. |
+
+### 3.10. Account and Member Management
+| Actor | Client User / National Administrator / Regional Operator |
+|------|--------|
+| Description | 사용자는 회원가입·로그인·로그아웃을 수행하고, 관리자는 권한 범위 안에서 회원 정보를 조회·수정·삭제한다. |
+
+### 3.11. Regional Monitoring
+| Actor | National Administrator / Regional Operator |
+|------|--------|
+| Description | 전국 관리자는 17개 시·도를 통합 관제하고, 지역 관리자는 담당 지역 데이터만 조회한다. |
+
+### 3.12. Public Alert Monitoring
+| Actor | Monitoring Operator / External Public Data API |
+|------|--------|
+| Description | 기관별 재난·기상 응답을 내부 표준 알림으로 변환하여 지역별 활성 알림에 표시한다. |
 
 <br><br>
 <br><br>
@@ -272,7 +307,7 @@ flowchart LR
 ### 4.1. System Connect
 | Purpose | 사용자가 시스템에 접속 |
 |--------|----------------------|
-| Approach | 사용자가 웹 앱에서 이름을 입력하고 연결 버튼을 누르면 서버로부터 고유 ID를 부여받는다. |
+| Approach | 사용자가 회원가입 또는 로그인으로 12시간 세션을 발급받고 서비스 연결을 실행하면 계정 ID와 관제 단말 ID가 연결된다. |
 | Dynamics | 사용자가 안전 서비스를 시작하는 경우 |
 | Goals | 사용자가 시스템을 사용할 수 있도록 연결 상태를 유지한다. |
 
@@ -366,7 +401,7 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 
 본 시스템은 웹 환경과의 호환성을 위해 HTTP와 JSON을 기반으로 프로토콜을 설계한다.
 
-- 사용자 등록, 위치 전송, SOS 요청, 접속 종료는 HTTP API로 처리한다.
+- 회원가입·로그인·사용자 단말 연결, 위치 전송, SOS 요청과 접속 종료는 HTTP API로 처리한다.
 - 요청 및 응답 본문은 JSON 형식을 사용한다.
 - 위치 데이터에는 위도, 경도, 정확도, 상태와 측정 시각을 포함한다.
 - 서버는 HTTP 상태 코드와 오류 메시지로 처리 결과를 전달한다.
@@ -395,7 +430,7 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 다수의 클라이언트가 접속하는 환경에서는 효율적인 사용자 관리가 필요하다.
 
 - 서버는 `clientId`를 키로 사용하는 해시맵으로 클라이언트를 관리한다.
-- 새로운 클라이언트가 접속하면 고유 ID를 생성하여 해시맵에 등록한다.
+- 인증된 회원이 처음 연결하면 단말 ID를 생성해 해시맵에 등록하고 `userId` 인덱스에 연결한다.
 - 종료한 클라이언트는 즉시 삭제하지 않고 `OFFLINE` 상태로 변경하여 이력을 유지한다.
 - 관제자는 서버의 상태 스냅샷과 실시간 이벤트를 통해 클라이언트를 모니터링한다.
 
@@ -454,7 +489,9 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 - 위치 조회와 SOS 처리 이력을 감사 로그로 남긴다.
 - 보존 기간이 끝난 위치 정보는 복구할 수 없도록 파기한다.
 
-현재 MVP에는 운영자 인증, 영구 감사 로그와 데이터 파기 기능이 없으며 실제 배포 전에 구현해야 한다.
+현재 MVP에는 PBKDF2 비밀번호 해싱, 12시간 Bearer 세션, 전국·지역·사용자 역할
+검사와 회원 삭제 기능이 구현되어 있다. 다만 HTTPS, HttpOnly 쿠키, MFA, 영구 감사
+로그, 법적 보존 기간에 따른 자동 파기와 백업 정책은 실제 배포 전에 추가해야 한다.
 
 ---
 
@@ -477,11 +514,16 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 | Data | Data Structure | Selection Reason |
 |---|---|---|
 | Client Registry | Hash Map (`clientId → Client`) | 사용자 등록, 조회, 상태 변경을 평균 `O(1)`에 처리 |
+| User Accounts | SQLite Table (`users`) | 계정, 역할, 지역과 선택형 프로필을 영구 저장 |
+| Login Sessions | SQLite Table (`sessions`) | 해시된 Bearer 토큰과 12시간 만료 시각 관리 |
+| User Index | Hash Map (`userId → clientId`) | 로그인 계정과 관제 단말을 평균 `O(1)`에 연결 |
+| Region Index | Hash Map (`regionId → Set[clientId]`) | 지역별 사용자 조회와 집계를 전체 순회 없이 수행 |
 | Route History | Hash Map + Bounded List | 사용자별 위치를 시간순으로 저장하고 최대 개수를 제한 |
 | Danger Areas | List | 현재 위험 지역 수가 적어 순차 비교가 단순하고 충분히 빠름 |
 | SOS Events | Hash Map | 이벤트 ID로 구조 접수 및 완료 상태를 빠르게 갱신 |
 | Event Timeline | Bounded List | 최신 이벤트를 앞에 추가하고 오래된 이벤트를 제거 |
 | SSE Subscribers | Queue List | 관제 화면별 이벤트를 독립적으로 전달하고 느린 연결을 분리 |
+| Public Alerts | Hash Map (`source:id → alert`) | 기관 알림 중복을 갱신하고 지역·만료 기준으로 조회 |
 
 위치 기록과 이벤트 기록은 메모리 증가를 방지하기 위해 최대 저장 개수를 제한한다. 시스템 규모가 커질 경우 위치 이력은 데이터베이스와 공간 인덱스로 이전한다.
 
@@ -497,6 +539,9 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 | Route Construction | Time-ordered Accumulation | 위치 데이터를 측정 시각 순서로 연결하여 이동 경로 생성 |
 | SOS Processing | State Machine | `OPEN → ACKNOWLEDGED → RESOLVED` 또는 `CANCELLED` 상태로 구조 진행 관리 |
 | Real-time Notification | Publish-Subscribe | 상태 변경을 구독 중인 관제 화면에 전파 |
+| Regional Filtering | Indexed Set Lookup | 역할과 지역 ID를 기준으로 조회 범위를 제한 |
+| Public Data Normalization | Adapter / Mapping | 기관별 JSON·XML·텍스트 응답을 공통 알림 구조로 변환 |
+| Orphan Client Cleanup | Set Membership Filtering | 실제 회원 ID 집합에 없는 단말과 관련 데이터를 시작 시 제거 |
 
 위험 지역이 대규모로 증가하면 모든 지역을 순차 비교하는 대신 R-tree, Quadtree 또는 Geohash 기반 공간 인덱스를 적용하여 후보 지역을 먼저 줄일 수 있다.
 
@@ -509,7 +554,11 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 | RapidSOS | 공공 긴급대응 기관 연계, GIS, 현장 데이터와 사고 검증 | 구조기관 연계는 API뿐 아니라 기관 협약과 검증 절차가 필요 |
 | Sahana Eden | 기관, 인력, 대피소, 물자와 지도를 통합한 재난 운영 | 장기적으로 사용자 위치를 넘어 재난 자원 관리와 연계 가능 |
 
-본 프로젝트는 상용 서비스와 달리 **재난 취약계층의 위험 지역 진입 감지, 관제 확인, SOS 처리 흐름을 하나의 학습용 MVP로 구현**한다는 데 의미가 있다. 반면 실제 지도, 모바일 백그라운드 동작, 인증, 영구 저장, 공공기관 연계와 검증된 대규모 성능은 아직 제공하지 않는다.
+본 프로젝트는 상용 서비스와 달리 **재난 취약계층의 계정 기반 위치 공유, 지역별
+관제, 위험 지역 진입 감지, SOS 처리와 공공 알림 확인 흐름을 하나의 학습용 MVP로
+구현**한다는 데 의미가 있다. 인증과 로컬 SQLite 저장, 시·도 경계 지도는 제공하지만 도로·주소 지도,
+모바일 백그라운드 동작, 공공 구조기관 자동 연계, 운영급 보안과 검증된 대규모
+성능은 아직 제공하지 않는다.
 
 # 8. Glossary
 

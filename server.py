@@ -22,11 +22,12 @@ from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
 from auth import AuthRepository, AuthenticationError, AuthorizationError
-from public_data import PublicDataSynchronizer
+from public_data import PublicDataSynchronizer, load_environment_file
 from regions import REGIONS, REGION_BY_ID
 
 
 ROOT = Path(__file__).resolve().parent
+load_environment_file(ROOT / ".env")
 STATIC = ROOT / "static"
 HOST = os.environ.get("RTLS_HOST", "0.0.0.0")
 PORT = 8080

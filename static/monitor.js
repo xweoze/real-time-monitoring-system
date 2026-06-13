@@ -11,52 +11,53 @@ let regionById = new Map();
 let refreshInFlight = false;
 let refreshQueued = false;
 let refreshTimer = null;
+let controlMap = null;
+let provinceLayer = null;
+let regionLayerById = new Map();
+let regionStatusLayer = null;
+let dangerAreaLayer = null;
+let clientMarkerLayer = null;
+let routeLayer = null;
+let viewportRegion = null;
 
-const bounds = { minLat: 32.9, maxLat: 38.8, minLng: 125.4, maxLng: 130.4 };
 const MAX_MAP_MARKERS = 500;
 const MAX_TABLE_ROWS = 300;
 const MAX_ALERTS = 100;
-const mainlandOutline = [
-  [38.62, 126.10], [38.58, 126.42], [38.64, 126.82], [38.62, 127.18],
-  [38.61, 127.58], [38.62, 127.98], [38.55, 128.28], [38.38, 128.45],
-  [38.20, 128.58], [37.98, 128.65], [37.78, 128.82], [37.58, 129.05],
-  [37.30, 129.20], [37.02, 129.31], [36.72, 129.42], [36.38, 129.45],
-  [36.08, 129.43], [35.78, 129.38], [35.54, 129.30], [35.31, 129.22],
-  [35.12, 129.10], [34.98, 128.92], [34.86, 128.68], [34.78, 128.42],
-  [34.72, 128.12], [34.67, 127.85], [34.58, 127.58], [34.55, 127.32],
-  [34.50, 127.08], [34.45, 126.85], [34.40, 126.62], [34.47, 126.42],
-  [34.59, 126.23], [34.72, 126.08], [34.87, 126.18], [35.02, 126.02],
-  [35.18, 126.12], [35.34, 126.02], [35.52, 126.20], [35.72, 126.30],
-  [35.92, 126.46], [36.12, 126.55], [36.34, 126.60], [36.55, 126.68],
-  [36.77, 126.78], [36.98, 126.66], [37.18, 126.73], [37.38, 126.66],
-  [37.56, 126.77], [37.73, 126.62], [37.92, 126.68], [38.10, 126.56],
-  [38.28, 126.45], [38.45, 126.27],
-];
-const islands = [
-  [[33.57, 126.10], [33.62, 126.35], [33.60, 126.63], [33.50, 126.84], [33.40, 126.70], [33.36, 126.42], [33.40, 126.18]],
-  [[34.55, 127.68], [34.64, 127.75], [34.57, 127.84], [34.49, 127.78]],
-  [[34.75, 128.00], [34.82, 128.10], [34.76, 128.18], [34.68, 128.09]],
-  [[35.02, 128.68], [35.10, 128.75], [35.04, 128.84], [34.96, 128.78]],
-];
-const regionLabelOffsets = {
-  "KR-11": { dx: 6, dy: -24 },
-  "KR-28": { dx: -52, dy: 10 },
-  "KR-41": { dx: 50, dy: 10 },
-  "KR-36": { dx: -30, dy: 22 },
-  "KR-30": { dx: 30, dy: 24 },
-  "KR-43": { dx: 30, dy: -16 },
-  "KR-44": { dx: -38, dy: 6 },
-  "KR-27": { dx: -20, dy: 22 },
-  "KR-31": { dx: 36, dy: 4 },
-  "KR-26": { dx: 24, dy: 28 },
-  "KR-29": { dx: -18, dy: 18 },
-  "KR-48": { dx: 0, dy: 24 },
-  "KR-50": { dx: 0, dy: 8 },
+const NATIONAL_BOUNDS = [[32.9, 124.4], [38.8, 132.0]];
+const KOSTAT_TO_REGION_ID = {
+  "11": "KR-11",
+  "21": "KR-26",
+  "22": "KR-27",
+  "23": "KR-28",
+  "24": "KR-29",
+  "25": "KR-30",
+  "26": "KR-31",
+  "29": "KR-36",
+  "31": "KR-41",
+  "32": "KR-42",
+  "33": "KR-43",
+  "34": "KR-44",
+  "35": "KR-45",
+  "36": "KR-46",
+  "37": "KR-47",
+  "38": "KR-48",
+  "39": "KR-50",
 };
-const project = (lat, lng) => ({
-  x: ((lng - bounds.minLng) / (bounds.maxLng - bounds.minLng)) * 100,
-  y: (1 - (lat - bounds.minLat) / (bounds.maxLat - bounds.minLat)) * 100,
-});
+const REGION_LABEL_OFFSETS = {
+  "KR-11": [8, -22],
+  "KR-28": [-45, 5],
+  "KR-41": [48, 8],
+  "KR-36": [-30, -18],
+  "KR-30": [28, 20],
+  "KR-43": [24, -16],
+  "KR-44": [-34, 4],
+  "KR-27": [-24, 18],
+  "KR-31": [34, 2],
+  "KR-26": [22, 25],
+  "KR-29": [-18, 18],
+  "KR-48": [0, 22],
+  "KR-50": [0, 8],
+};
 const hasOpenSos = id => openSosClientIds.has(id);
 const isLocationStale = client => {
   if (!client.location?.capturedAt) return false;
@@ -83,19 +84,93 @@ const todayEvents = () => {
   );
 };
 
-const polygonPoints = coordinates => coordinates.map(([lat, lng]) => {
-  const point = project(lat, lng);
-  return `${(point.x * 10).toFixed(1)},${(point.y * 6.2).toFixed(1)}`;
-}).join(" ");
+function provinceStyle(feature) {
+  const regionId = KOSTAT_TO_REGION_ID[feature.properties.code];
+  const selected = selectedRegion === regionId;
+  return {
+    color: selected ? "#72fff2" : "#388ca3",
+    weight: selected ? 2.5 : 1.2,
+    opacity: selected ? 1 : 0.85,
+    fillColor: selected ? "#215e73" : "#173e55",
+    fillOpacity: selected ? 0.82 : 0.68,
+  };
+}
 
-function renderGeography() {
-  const mainland = `<polygon class="land" points="${polygonPoints(mainlandOutline)}"/>`;
-  const islandShapes = islands.map(
-    coordinates => `<polygon class="island" points="${polygonPoints(coordinates)}"/>`
-  ).join("");
-  const border = polygonPoints(mainlandOutline.slice(0, 8));
-  document.querySelector("#geographyLayer").innerHTML =
-    `${mainland}${islandShapes}<polyline class="border" points="${border}"/>`;
+async function initializeMap() {
+  controlMap = L.map("map", {
+    attributionControl: true,
+    zoomControl: true,
+    minZoom: 6,
+    maxZoom: 18,
+    zoomSnap: 0.25,
+    preferCanvas: true,
+  });
+  controlMap.attributionControl.setPrefix(
+    '<a href="https://leafletjs.com/" target="_blank" rel="noreferrer">Leaflet</a>'
+  );
+  controlMap.attributionControl.addAttribution(
+    '<a href="https://sgis.kostat.go.kr/" target="_blank" rel="noreferrer">통계청 SGIS (2018)</a>'
+  );
+  controlMap.createPane("regions");
+  controlMap.getPane("regions").style.zIndex = 310;
+  controlMap.createPane("status");
+  controlMap.getPane("status").style.zIndex = 430;
+  controlMap.createPane("clients");
+  controlMap.getPane("clients").style.zIndex = 470;
+
+  regionStatusLayer = L.layerGroup().addTo(controlMap);
+  dangerAreaLayer = L.layerGroup().addTo(controlMap);
+  clientMarkerLayer = L.layerGroup().addTo(controlMap);
+  routeLayer = L.layerGroup().addTo(controlMap);
+  controlMap.fitBounds(NATIONAL_BOUNDS, { padding: [18, 18], animate: false });
+
+  const response = await fetch("/static/data/skorea-provinces-2018-topo-simple.json");
+  if (!response.ok) throw new Error("대한민국 지도 경계 데이터를 불러오지 못했습니다.");
+  const topology = await response.json();
+  const object = topology.objects.skorea_provinces_2018_geo;
+  const geojson = topojson.feature(topology, object);
+  provinceLayer = L.geoJSON(geojson, {
+    pane: "regions",
+    style: provinceStyle,
+    onEachFeature(feature, layer) {
+      const regionId = KOSTAT_TO_REGION_ID[feature.properties.code];
+      if (!regionId) return;
+      regionLayerById.set(regionId, layer);
+      layer.bindTooltip(feature.properties.name, {
+        className: "province-tooltip",
+        direction: "center",
+        sticky: true,
+      });
+      layer.on({
+        click() {
+          if (authSession.user?.role !== "NATIONAL_ADMIN") return;
+          selectedRegion = regionId;
+          document.querySelector("#regionFilter").value = selectedRegion;
+          selectedId = null;
+          selectedRoute = [];
+          scheduleRefresh(0);
+        },
+        mouseover() {
+          layer.setStyle({ fillOpacity: 0.9, weight: 2 });
+        },
+        mouseout() {
+          layer.setStyle(provinceStyle(feature));
+        },
+      });
+    },
+  }).addTo(controlMap);
+}
+
+function syncMapViewport() {
+  if (!controlMap || viewportRegion === selectedRegion) return;
+  viewportRegion = selectedRegion;
+  const selectedLayer = selectedRegion ? regionLayerById.get(selectedRegion) : null;
+  const targetBounds = selectedLayer?.getBounds() || L.latLngBounds(NATIONAL_BOUNDS);
+  controlMap.fitBounds(targetBounds, {
+    padding: selectedRegion ? [42, 42] : [18, 18],
+    maxZoom: selectedRegion ? 10 : 7.25,
+    animate: true,
+  });
 }
 
 function rebuildIndexes() {
@@ -252,64 +327,99 @@ function render() {
 }
 
 function renderMap() {
-  document.querySelector("#regionMarkers").innerHTML = (snapshot.regions || []).map(region => {
-    const point = project(region.lat, region.lng);
+  if (!controlMap) return;
+  provinceLayer?.setStyle(provinceStyle);
+  regionStatusLayer.clearLayers();
+  dangerAreaLayer.clearLayers();
+  clientMarkerLayer.clearLayers();
+  routeLayer.clearLayers();
+
+  (snapshot.regions || []).forEach(region => {
     const level = region.sos || region.publicSeverity === "CRITICAL"
       ? "sos"
       : region.danger || region.publicSeverity === "WARNING"
         ? "danger"
         : "";
-    const offset = regionLabelOffsets[region.id] || { dx: 0, dy: 0 };
-    return `
-      <i class="region-anchor" style="left:${point.x}%;top:${point.y}%"></i>
-      <button class="region-marker ${level}"
-        style="left:${point.x}%;top:${point.y}%;--dx:${offset.dx}px;--dy:${offset.dy}px"
-        data-region="${region.id}" title="${escapeHtml(region.name)}">
+    const [offsetX, offsetY] = REGION_LABEL_OFFSETS[region.id] || [0, 0];
+    const label = L.marker([region.lat, region.lng], {
+      pane: "status",
+      interactive: true,
+      icon: L.divIcon({
+        className: "region-status-icon",
+        iconSize: null,
+        html: `<button class="region-marker ${level}" type="button"
+          style="--offset-x:${offsetX}px;--offset-y:${offsetY}px"
+          title="${escapeHtml(region.name)}">
         <b>${escapeHtml(region.name.replace(/(특별자치도|특별자치시|특별시|광역시|도)$/,""))}</b>
         <span>${region.online}/${region.total}${region.publicAlerts ? ` · 알림 ${region.publicAlerts}` : ""}</span>
-      </button>`;
-  }).join("");
-  document.querySelectorAll(".region-marker").forEach(marker => {
-    marker.onclick = () => {
+      </button>`,
+      }),
+    }).addTo(regionStatusLayer);
+    label.on("click", () => {
       if (authSession.user.role !== "NATIONAL_ADMIN") return;
-      selectedRegion = marker.dataset.region;
+      selectedRegion = region.id;
       document.querySelector("#regionFilter").value = selectedRegion;
+      selectedId = null;
+      selectedRoute = [];
       scheduleRefresh(0);
-    };
+    });
   });
 
   const visibleAreas = selectedRegion ? snapshot.dangerAreas : [];
-  document.querySelector("#areas").innerHTML = visibleAreas.map(area => {
-    const point = project(area.lat, area.lng);
-    const size = Math.max(30, Math.min(60, area.radius / 8));
-    return `<div class="danger-area" style="left:${point.x}%;top:${point.y}%;width:${size}px;height:${size}px"><label>${escapeHtml(area.name)}</label></div>`;
-  }).join("");
+  visibleAreas.forEach(area => {
+    L.circle([area.lat, area.lng], {
+      pane: "status",
+      radius: area.radius,
+      className: "danger-area",
+      color: "#ff5d6c",
+      fillColor: "#ff5d6c",
+      fillOpacity: 0.14,
+      weight: 1.5,
+    }).bindTooltip(area.name, {
+      className: "danger-tooltip",
+      direction: "bottom",
+      permanent: true,
+      offset: [0, 8],
+    }).addTo(dangerAreaLayer);
+  });
 
   const mapClients = selectedRegion
     ? snapshot.clients.filter(client => client.location).slice(0, MAX_MAP_MARKERS)
     : [];
-  document.querySelector("#markers").innerHTML = mapClients.map(client => {
-    const point = project(client.location.lat, client.location.lng);
+  mapClients.forEach(client => {
     const state = hasOpenSos(client.id)
       ? "sos"
       : client.connectionStatus === "OFFLINE" || isLocationStale(client)
         ? "offline"
         : client.dangerState === "DANGER" ? "danger" : "";
-    return `<button class="marker ${state}" style="left:${point.x}%;top:${point.y}%"
-      data-id="${client.id}" data-label="${escapeHtml(client.name)}"
-      aria-label="${escapeHtml(client.name)}"></button>`;
-  }).join("");
-  document.querySelectorAll(".marker").forEach(marker => {
-    marker.onclick = () => selectClient(marker.dataset.id);
+    const marker = L.marker([client.location.lat, client.location.lng], {
+      pane: "clients",
+      icon: L.divIcon({
+        className: "client-map-icon",
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
+        html: `<button class="marker ${state}" type="button" aria-label="${escapeHtml(client.name)}"></button>`,
+      }),
+    }).bindTooltip(client.name, {
+      className: "client-tooltip",
+      direction: "bottom",
+      offset: [0, 12],
+      permanent: true,
+    }).addTo(clientMarkerLayer);
+    marker.on("click", () => selectClient(client.id));
   });
 
-  const points = selectedRoute.map(point => {
-    const projected = project(point.lat, point.lng);
-    return `${projected.x * 10},${projected.y * 6.2}`;
-  }).join(" ");
-  document.querySelector("#routeLayer").innerHTML = points
-    ? `<polyline points="${points}"/>`
-    : "";
+  if (selectedRoute.length) {
+    L.polyline(selectedRoute.map(point => [point.lat, point.lng]), {
+      pane: "clients",
+      color: "#52c8ff",
+      weight: 4,
+      opacity: 0.9,
+      dashArray: "8 7",
+      className: "client-route",
+    }).addTo(routeLayer);
+  }
+  syncMapViewport();
 }
 
 function renderAlerts(sosEvents, dangerClients, publicAlerts) {
@@ -544,7 +654,11 @@ function updateRelativeTimes() {
 
 async function initialize() {
   setupMainMenu();
-  renderGeography();
+  try {
+    await initializeMap();
+  } catch (error) {
+    toast(error.message);
+  }
   regions = await loadRegions([
     document.querySelector("#operatorRegion"),
   ]);
