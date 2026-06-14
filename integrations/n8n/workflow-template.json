@@ -1,0 +1,55 @@
+{
+  "name": "RTLS Signed Alert Webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rtls-alert",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "rtls-webhook",
+      "name": "RTLS Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "rtls-alert"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst secret = $env.RTLS_WEBHOOK_SECRET;\nif (!secret) throw new Error('RTLS_WEBHOOK_SECRET is not configured');\nconst signature = $json.headers?.['x-rtls-signature'] || '';\nconst rawBody = JSON.stringify($json.body);\nconst expected = 'sha256=' + crypto.createHmac('sha256', secret).update(rawBody).digest('hex');\nconst valid = signature.length === expected.length && crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));\nif (!valid) throw new Error('Invalid RTLS webhook signature');\nreturn [{ json: $json.body }];"
+      },
+      "id": "verify-signature",
+      "name": "Verify HMAC Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { accepted: true, eventType: $json.event.type } }}",
+        "options": {}
+      },
+      "id": "accepted-response",
+      "name": "Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [520, 0]
+    }
+  ],
+  "connections": {
+    "RTLS Webhook": {
+      "main": [[{"node": "Verify HMAC Signature", "type": "main", "index": 0}]]
+    },
+    "Verify HMAC Signature": {
+      "main": [[{"node": "Accepted", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "rtls-alert-template-v1"
+}

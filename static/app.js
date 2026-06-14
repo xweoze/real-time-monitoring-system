@@ -7,8 +7,24 @@ let holdStarted = 0;
 let holdFrame = null;
 let locationWatchId = null;
 let heartbeatTimer = null;
+let guardianRefreshTimer = null;
+let batteryManager = null;
 
 const regionName = id => regions.find(region => region.id === id)?.name || id || "-";
+
+const batteryPayload = () => batteryManager ? {
+  batteryLevel: Math.round(batteryManager.level * 100),
+  batteryCharging: batteryManager.charging,
+} : {};
+
+async function initializeBattery() {
+  if (!navigator.getBattery) return;
+  try {
+    batteryManager = await navigator.getBattery();
+  } catch (_) {
+    batteryManager = null;
+  }
+}
 
 function clearClient() {
   stopAutoShare();
@@ -23,14 +39,19 @@ function showAuthenticated(user) {
   document.querySelector("#authCard").hidden = Boolean(user);
   document.querySelector("#logoutBtn").hidden = !user;
   document.querySelector("#accountName").textContent = user?.displayName || "";
-  if (!client) document.querySelector("#setupCard").hidden = !user;
+  const isGuardian = user?.role === "GUARDIAN";
+  document.querySelector("#guardianContent").hidden = !isGuardian;
+  document.querySelector("#setupCard").hidden = !user || isGuardian || Boolean(client);
+  if (isGuardian) startGuardianDashboard();
+  else stopGuardianDashboard();
 }
 
 function setConnected(connected) {
   const pill = document.querySelector("#connectionPill");
+  const isGuardian = authSession.user?.role === "GUARDIAN";
   pill.innerHTML = `<i class="status-dot ${connected ? "" : "offline"}"></i> ${connected ? "실시간 연결" : "연결 안 됨"}`;
-  document.querySelector("#setupCard").hidden = connected || !authSession.user;
-  document.querySelector("#appContent").hidden = !connected;
+  document.querySelector("#setupCard").hidden = connected || !authSession.user || isGuardian;
+  document.querySelector("#appContent").hidden = !connected || isGuardian;
 }
 
 function setAuthMode(isSignup) {
@@ -42,23 +63,31 @@ function setAuthMode(isSignup) {
   document.querySelector("#passwordInput").autocomplete = isSignup ? "new-password" : "current-password";
 }
 
+function updateSignupRole() {
+  const isGuardian = document.querySelector("#roleInput").value === "GUARDIAN";
+  document.querySelector("#userProfileFields").hidden = isGuardian;
+}
+
 async function submitAuth() {
   const payload = {
     username: document.querySelector("#usernameInput").value.trim(),
     password: document.querySelector("#passwordInput").value,
   };
   if (signupMode) {
+    payload.role = document.querySelector("#roleInput").value;
     payload.displayName = document.querySelector("#displayNameInput").value.trim();
-    payload.birthDate = document.querySelector("#birthDateInput").value || null;
-    payload.gender = document.querySelector("#genderInput").value;
-    payload.regionId = document.querySelector("#regionInput").value;
+    if (payload.role === "USER") {
+      payload.birthDate = document.querySelector("#birthDateInput").value || null;
+      payload.gender = document.querySelector("#genderInput").value;
+      payload.regionId = document.querySelector("#regionInput").value;
+    }
   }
   try {
     const data = await api(signupMode ? "/api/auth/signup" : "/api/auth/login", {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    if (data.user.role !== "USER") {
+    if (!["USER", "GUARDIAN"].includes(data.user.role)) {
       authSession.save(data);
       await logoutSession();
       return toast("관리자 계정은 관제센터 화면에서 로그인해 주세요.");
@@ -66,7 +95,10 @@ async function submitAuth() {
     authSession.save(data);
     showAuthenticated(data.user);
     toast(signupMode ? "회원가입과 로그인이 완료되었습니다." : "로그인되었습니다.");
-    await restoreClient();
+    if (data.user.role === "USER") {
+      await restoreClient();
+      await loadGuardians();
+    }
   } catch (error) {
     toast(error.message);
   }
@@ -114,6 +146,7 @@ async function sendLocation(accuracy = 5, quiet = false) {
       accuracy,
       state: "NORMAL",
       capturedAt: new Date().toISOString(),
+      ...batteryPayload(),
     };
     const data = await api(`/api/clients/${client.id}/location`, {
       method: "POST",
@@ -137,7 +170,7 @@ function startHeartbeat() {
     try {
       const data = await api(`/api/clients/${client.id}/heartbeat`, {
         method: "POST",
-        body: "{}",
+        body: JSON.stringify(batteryPayload()),
       });
       client = data.client;
       sessionStorage.setItem("rtls-client", JSON.stringify(client));
@@ -193,6 +226,94 @@ function renderClient() {
   document.querySelector("#statusMessage").textContent = danger
     ? "안전한 장소로 즉시 이동하세요."
     : "위치 정보를 관제센터와 공유하고 있습니다.";
+}
+
+async function loadGuardians() {
+  if (authSession.user?.role !== "USER") return;
+  const data = await api("/api/guardians");
+  document.querySelector("#guardianList").innerHTML = data.guardians.map(guardian => `
+    <span><b>${escapeHtml(guardian.displayName)}</b> · ${escapeHtml(guardian.username)}
+      <button type="button" data-guardian="${guardian.id}">해제</button>
+    </span>
+  `).join("") || "<span>연결된 보호자가 없습니다.</span>";
+}
+
+async function linkGuardian(event) {
+  event.preventDefault();
+  try {
+    await api("/api/guardians/link", {
+      method: "POST",
+      body: JSON.stringify({
+        guardianUsername: document.querySelector("#guardianUsername").value.trim(),
+      }),
+    });
+    event.target.reset();
+    await loadGuardians();
+    toast("보호자 계정을 연결했습니다.");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function unlinkGuardian(guardianId) {
+  try {
+    await api(`/api/guardians/${encodeURIComponent(guardianId)}`, {
+      method: "DELETE",
+    });
+    await loadGuardians();
+    toast("보호자 연결을 해제했습니다.");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+const wardStatus = ward => {
+  if (ward.openSos) return { label: "SOS 진행 중", className: "sos" };
+  if (!ward.client) return { label: "서비스 미연결", className: "offline" };
+  if (ward.client.dangerState === "DANGER") return { label: "위험 지역", className: "danger" };
+  if (ward.client.connectionStatus !== "ONLINE") return { label: "오프라인", className: "offline" };
+  return { label: "안전", className: "safe" };
+};
+
+async function loadWards() {
+  if (authSession.user?.role !== "GUARDIAN") return;
+  try {
+    const data = await api("/api/guardian/wards");
+    document.querySelector("#wardList").innerHTML = data.wards.map(ward => {
+      const status = wardStatus(ward);
+      const location = ward.client?.location;
+      return `
+        <article class="ward-card panel ${status.className}">
+          <div class="ward-card-head">
+            <div><b>${escapeHtml(ward.user.displayName)}</b><span>${escapeHtml(regionName(ward.user.regionId))}</span></div>
+            <strong>${status.label}</strong>
+          </div>
+          <dl>
+            <div><dt>최근 갱신</dt><dd>${ward.client ? ago(ward.client.updatedAt) : "-"}</dd></div>
+            <div><dt>현재 위치</dt><dd>${escapeHtml(location?.address || (location ? `${location.lat.toFixed(5)}, ${location.lng.toFixed(5)}` : "위치 없음"))}</dd></div>
+            <div><dt>위치 정확도</dt><dd>${location ? `${Math.round(location.accuracy || 0)} m` : "-"}</dd></div>
+          </dl>
+        </article>`;
+    }).join("") || `<div class="panel empty">연결된 가족이 없습니다.<br>보호 대상 사용자가 내 아이디를 연결해야 합니다.</div>`;
+  } catch (error) {
+    if (error.status === 401) {
+      authSession.clear();
+      showAuthenticated(null);
+    } else {
+      toast(error.message);
+    }
+  }
+}
+
+function startGuardianDashboard() {
+  stopGuardianDashboard();
+  loadWards();
+  guardianRefreshTimer = setInterval(loadWards, 15000);
+}
+
+function stopGuardianDashboard() {
+  clearInterval(guardianRefreshTimer);
+  guardianRefreshTimer = null;
 }
 
 function showDanger() {
@@ -262,6 +383,7 @@ async function disconnect() {
 
 async function logout() {
   if (client) await disconnect();
+  stopGuardianDashboard();
   await logoutSession();
   showAuthenticated(null);
   setConnected(false);
@@ -289,6 +411,7 @@ async function restoreClient() {
 
 document.querySelector("#loginTab").onclick = () => setAuthMode(false);
 document.querySelector("#signupTab").onclick = () => setAuthMode(true);
+document.querySelector("#roleInput").onchange = updateSignupRole;
 document.querySelector("#authBtn").onclick = submitAuth;
 document.querySelector("#logoutBtn").onclick = logout;
 document.querySelector("#connectBtn").onclick = connect;
@@ -298,6 +421,11 @@ document.querySelector("#confirmDanger").onclick = () => {
   document.querySelector("#dangerModal").hidden = true;
 };
 document.querySelector("#disconnectBtn").onclick = disconnect;
+document.querySelector("#guardianLinkForm").addEventListener("submit", linkGuardian);
+document.querySelector("#guardianList").addEventListener("click", event => {
+  if (event.target.dataset.guardian) unlinkGuardian(event.target.dataset.guardian);
+});
+document.querySelector("#guardianRefreshBtn").onclick = loadWards;
 document.querySelector("#autoShare").onchange = event => {
   if (event.target.checked) startAutoShare();
   else {
@@ -313,12 +441,13 @@ sosButton.addEventListener("pointerdown", startHold);
 setInterval(renderClient, 1000);
 
 async function initialize() {
+  await initializeBattery();
   regions = await loadRegions([document.querySelector("#regionInput")]);
   document.querySelector("#birthDateInput").max = new Date().toISOString().slice(0, 10);
   if (authSession.token) {
     try {
       const data = await api("/api/auth/me");
-      if (data.user.role !== "USER") throw new Error("관리자 계정");
+      if (!["USER", "GUARDIAN"].includes(data.user.role)) throw new Error("관리자 계정");
       authSession.user = data.user;
     } catch (_) {
       authSession.clear();
@@ -326,7 +455,11 @@ async function initialize() {
   }
   showAuthenticated(authSession.user);
   setConnected(false);
-  await restoreClient();
+  updateSignupRole();
+  if (authSession.user?.role === "USER") {
+    await restoreClient();
+    await loadGuardians();
+  }
 }
 
 initialize();

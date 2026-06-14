@@ -141,6 +141,62 @@ class AuthRepositoryTest(unittest.TestCase):
         with self.assertRaises(AuthenticationError):
             self.repository.authenticate(session["token"])
 
+    def test_guardian_account_can_be_linked_and_unlinked(self):
+        protected = self.repository.create_user(
+            "protected_user", "password123", "보호 대상", "KR-11"
+        )
+        guardian = self.repository.create_user(
+            "guardian_user",
+            "password123",
+            "보호자",
+            "",
+            role="GUARDIAN",
+        )
+
+        linked = self.repository.link_guardian(
+            protected["id"], guardian["username"]
+        )
+
+        self.assertEqual(guardian["role"], "GUARDIAN")
+        self.assertIsNone(guardian["regionId"])
+        self.assertEqual(linked["id"], guardian["id"])
+        self.assertEqual(
+            [item["id"] for item in self.repository.guardians_for_user(protected["id"])],
+            [guardian["id"]],
+        )
+        self.assertEqual(
+            [item["id"] for item in self.repository.wards_for_guardian(guardian["id"])],
+            [protected["id"]],
+        )
+
+        self.repository.unlink_guardian(protected["id"], guardian["id"])
+        self.assertEqual(self.repository.guardians_for_user(protected["id"]), [])
+        self.assertEqual(self.repository.wards_for_guardian(guardian["id"]), [])
+
+    def test_guardian_link_validation_and_cascade_delete(self):
+        protected = self.repository.create_user(
+            "protected_two", "password123", "두 번째 사용자", "KR-26"
+        )
+        guardian = self.repository.create_user(
+            "guardian_two",
+            "password123",
+            "두 번째 보호자",
+            "",
+            role="GUARDIAN",
+        )
+
+        with self.assertRaises(KeyError):
+            self.repository.link_guardian(protected["id"], "missing_guardian")
+
+        self.repository.link_guardian(protected["id"], guardian["username"])
+        with self.assertRaises(ValueError):
+            self.repository.link_guardian(protected["id"], guardian["username"])
+
+        self.repository.delete_member(protected["id"])
+        self.assertEqual(self.repository.wards_for_guardian(guardian["id"]), [])
+        with self.assertRaises(KeyError):
+            self.repository.unlink_guardian(protected["id"], guardian["id"])
+
 
 if __name__ == "__main__":
     unittest.main()

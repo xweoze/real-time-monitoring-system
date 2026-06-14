@@ -5,3 +5,6 @@ data/
 !static/data/
 !static/data/**
 .env
+node_modules/
+playwright-report/
+test-results/

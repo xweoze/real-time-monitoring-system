@@ -63,6 +63,18 @@ class AuthRepository:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS guardian_links (
+                    guardian_id TEXT NOT NULL,
+                    protected_user_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (guardian_id, protected_user_id),
+                    FOREIGN KEY(guardian_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY(protected_user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
         self._ensure_default_admin()
 
     def _connect(self) -> sqlite3.Connection:
@@ -175,10 +187,12 @@ class AuthRepository:
             raise ValueError("비밀번호는 8자 이상이어야 합니다.")
         if not display_name or len(display_name) > 30:
             raise ValueError("표시 이름은 1~30자로 입력해 주세요.")
-        if role not in {"USER", "REGIONAL_OPERATOR"}:
+        if role not in {"USER", "GUARDIAN", "REGIONAL_OPERATOR"}:
             raise ValueError("지원하지 않는 계정 역할입니다.")
-        if region_id not in REGION_BY_ID:
+        if role != "GUARDIAN" and region_id not in REGION_BY_ID:
             raise ValueError("유효한 지역을 선택해 주세요.")
+        if role == "GUARDIAN":
+            region_id = None
         gender = str(gender or "UNDISCLOSED").upper()
         if gender not in {"FEMALE", "MALE", "OTHER", "UNDISCLOSED"}:
             raise ValueError("유효한 성별 값을 선택해 주세요.")
@@ -310,6 +324,76 @@ class AuthRepository:
                 "SELECT id FROM users WHERE role = 'USER'"
             ).fetchall()
         return {row["id"] for row in rows}
+
+    def link_guardian(self, protected_user_id: str, guardian_username: str) -> dict:
+        guardian_username = str(guardian_username or "").strip()
+        if not guardian_username:
+            raise ValueError("보호자 아이디를 입력해 주세요.")
+        with self._connect() as connection:
+            protected = connection.execute(
+                "SELECT * FROM users WHERE id = ? AND role = 'USER'",
+                (protected_user_id,),
+            ).fetchone()
+            if not protected:
+                raise KeyError("보호 대상 사용자를 찾을 수 없습니다.")
+            guardian = connection.execute(
+                "SELECT * FROM users WHERE username = ? AND role = 'GUARDIAN'",
+                (guardian_username,),
+            ).fetchone()
+            if not guardian:
+                raise KeyError("해당 아이디의 보호자 계정을 찾을 수 없습니다.")
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO guardian_links (
+                        guardian_id, protected_user_id, created_at
+                    ) VALUES (?, ?, ?)
+                    """,
+                    (guardian["id"], protected_user_id, self._now()),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("이미 연결된 보호자입니다.") from exc
+        return self._public_user(guardian)
+
+    def guardians_for_user(self, protected_user_id: str) -> list[dict]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT users.*
+                FROM guardian_links
+                JOIN users ON users.id = guardian_links.guardian_id
+                WHERE guardian_links.protected_user_id = ?
+                ORDER BY guardian_links.created_at, users.display_name
+                """,
+                (protected_user_id,),
+            ).fetchall()
+        return [self._public_user(row) for row in rows]
+
+    def wards_for_guardian(self, guardian_id: str) -> list[dict]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT users.*
+                FROM guardian_links
+                JOIN users ON users.id = guardian_links.protected_user_id
+                WHERE guardian_links.guardian_id = ?
+                ORDER BY users.display_name
+                """,
+                (guardian_id,),
+            ).fetchall()
+        return [self._public_user(row) for row in rows]
+
+    def unlink_guardian(self, protected_user_id: str, guardian_id: str) -> None:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM guardian_links
+                WHERE protected_user_id = ? AND guardian_id = ?
+                """,
+                (protected_user_id, guardian_id),
+            )
+        if cursor.rowcount == 0:
+            raise KeyError("연결된 보호자를 찾을 수 없습니다.")
 
     def update_member(
         self,

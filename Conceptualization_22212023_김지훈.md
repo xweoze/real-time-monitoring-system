@@ -58,6 +58,12 @@
 <td>계정·지역 권한·회원 관리·공공데이터 기능 반영</td>
 <td>김지훈</td>
 </tr>
+<tr align="center">
+<td>2026-06-14</td>
+<td>1.30</td>
+<td>안전 분석·외부 알림·재난문서 검색과 현재 UI 반영</td>
+<td>김지훈</td>
+</tr>
 </table>
 
 
@@ -90,11 +96,11 @@
 ### 1.1 Project background
 
 <div align="center">
-  <img width="1536" height="1024" alt="dfdf" src="https://github.com/user-attachments/assets/e776a374-044e-45df-91ea-9f457db673fc" />
+  <img width="1536" height="1024" alt="재난 상황에서 취약계층을 구조하는 개념 이미지" src="https://github.com/user-attachments/assets/e776a374-044e-45df-91ea-9f457db673fc" />
 </div>
 
 <div align="center">
-  <sub>(그림 1) 재난 상황 속 취약계층 구조 장면</sub>
+  <sub>(그림 1) 문제 배경을 설명하기 위한 재난 구조 개념 이미지이며 실제 시스템 화면이나 사건 기록이 아니다.</sub>
 </div>
 
 ---
@@ -116,11 +122,11 @@
 ### 📡 System Idea
 
 <div align="center">
-  <img width="1536" height="1024" alt="dfsf" src="https://github.com/user-attachments/assets/a49a2889-b134-45c9-b24c-76c8387dec1a" />
+  <img width="1440" height="1000" alt="현재 구현된 RTLS 전국 관제 대시보드" src="e2e/monitor.spec.js-snapshots/monitor-dashboard-desktop-chromium-darwin.png" />
 </div>
 
 <div align="center">
-  <sub>(그림 3) 재난 상황 취약계층 실시간 모니터링 시스템 구조</sub>
+  <sub>(그림 2) Playwright 화면 회귀검사로 검증하는 현재 전국 관제 대시보드</sub>
 </div>
 
 ---
@@ -142,6 +148,12 @@
 - 전국 관리자는 지역 관리자와 전체 회원을 관리한다
 - 지역 관리자는 담당 지역 회원과 이벤트만 확인한다
 - 공공데이터의 지역별 재난·기상 알림을 관제 화면에서 확인한다
+- 원형·다각형 위험구역의 진입과 이탈을 기록한다
+- 신호 끊김·배터리 부족·장시간 무동작을 기기 경고로 표시한다
+- 이동 거리·정차 시간·자주 방문한 장소와 가까운 안전시설을 확인한다
+- 사용자 그룹, 알림 검색과 관리자 작업 감사 로그를 관리한다
+- 선택적으로 n8n Webhook으로 중요 이벤트를 외부 자동화에 전달한다
+- 출처가 표시된 재난 행동요령 문서를 검색한다
 
 ---
 
@@ -184,7 +196,8 @@
 - 사용자 계정, 비밀번호 해시와 로그인 세션은 SQLite에 저장한다.
 - 계정이 없거나 삭제된 사용자와 연결된 과거 단말 데이터는 자동 정리한다.
 - 현재 지도는 Leaflet과 통계청 SGIS의 2018년 시·도 경계를 사용한다. 실제
-  위·경도 배치는 지원하지만 최신 행정 경계, 도로, 건물과 주소 검색은 제공하지 않는다.
+  위·경도 배치와 관제자 요청 기반 주소 변환을 지원하지만 최신 행정 경계,
+  도로·건물 배경 지도와 주소 검색은 제공하지 않는다.
 - 공공데이터는 기관의 활용 승인, 실제 호출 URL과 인증키가 설정된 경우에만 동기화한다.
 - 다수 사용자 처리 성능은 부하 테스트 전까지 목표값으로만 관리한다.
 
@@ -192,7 +205,11 @@
 ## 2. System context diagram
 
 <div align="center">
-  <img width="1536" height="1024" alt="diagram" src="https://github.com/user-attachments/assets/387e6a5c-e9ad-4584-b6d2-5c81c24e660f" />
+  <img width="1536" height="1024" alt="초기 시스템 컨텍스트 다이어그램" src="https://github.com/user-attachments/assets/387e6a5c-e9ad-4584-b6d2-5c81c24e660f" />
+</div>
+
+<div align="center">
+  <sub>(그림 3) 초기 컨텍스트 개념도. 아래 Revised System Context가 현재 구현 범위의 기준이다.</sub>
 </div>
 
 ### Revised System Context
@@ -200,17 +217,24 @@
 ```mermaid
 flowchart LR
     Client[Client App]
+    Guardian[Guardian]
     Server[RTLS Server]
     Monitor[Monitoring Operator]
     Admin[National Administrator]
     PublicData[Public Data API]
+    N8N[n8n Webhook]
+    Knowledge[Disaster Documents]
 
     Client -->|Signup / Login / Location / SOS / Logout| Server
     Server -->|Session / Danger Alert / Result| Client
+    Client -->|Guardian Link Consent| Server
+    Server -->|Limited Ward Safety Status| Guardian
     Server -->|Regional Snapshot / SSE Event / Route| Monitor
     Monitor -->|Route Request / SOS Status Update| Server
     Admin -->|Member and Regional Operator Management| Server
     PublicData -->|Weather and Disaster Alerts| Server
+    Server -->|Signed Critical Events| N8N
+    Knowledge -->|Source-grounded Guidance| Server
 ```
 
 - Connect : 접속  
@@ -284,20 +308,55 @@ flowchart LR
 |------|--------|
 | Description | 사용자가 위치 공유 연결을 종료하거나 계정에서 로그아웃한다. |
 
-### 3.10. Account and Member Management
-| Actor | Client User / National Administrator / Regional Operator |
+### 3.10. Account Management
+| Actor | Client User / Guardian |
 |------|--------|
-| Description | 사용자는 회원가입·로그인·로그아웃을 수행하고, 관리자는 권한 범위 안에서 회원 정보를 조회·수정·삭제한다. |
+| Description | 일반 사용자와 보호자는 회원가입·로그인·로그아웃과 서버 세션 종료를 수행한다. |
 
-### 3.11. Regional Monitoring
+### 3.11. Member Management
+| Actor | National Administrator / Regional Operator |
+|------|--------|
+| Description | 관리자는 권한 범위 안에서 회원 정보를 조회·수정·삭제하고 연결된 관제 데이터를 정리한다. |
+
+### 3.12. Regional Monitoring
 | Actor | National Administrator / Regional Operator |
 |------|--------|
 | Description | 전국 관리자는 17개 시·도를 통합 관제하고, 지역 관리자는 담당 지역 데이터만 조회한다. |
 
-### 3.12. Public Alert Monitoring
+### 3.13. Public Alert Monitoring
 | Actor | Monitoring Operator / External Public Data API |
 |------|--------|
 | Description | 기관별 재난·기상 응답을 내부 표준 알림으로 변환하여 지역별 활성 알림에 표시한다. |
+
+### 3.14. Danger Area and Device Alert Management
+| Actor | Monitoring Operator / System |
+|------|--------|
+| Description | 원형·다각형 위험구역을 관리하고 진입·이탈, 신호 끊김, 배터리 부족과 장시간 무동작을 감지한다. |
+
+### 3.15. Movement Analytics and Safety Facilities
+| Actor | Monitoring Operator |
+|------|--------|
+| Description | 이동 거리, 정차 시간, 자주 방문한 장소와 가까운 대피소·병원·소방서를 조회한다. |
+
+### 3.16. Group, Alert and Audit Management
+| Actor | National Administrator / Regional Operator |
+|------|--------|
+| Description | 사용자 그룹과 지도 필터, 알림 조건 검색, 권한 범위의 관리자 작업 기록을 관리한다. |
+
+### 3.17. Guardian Safety Check
+| Actor | Client User / Guardian |
+|------|--------|
+| Description | 사용자가 보호자를 직접 연결하고 보호자는 허용된 대상의 최신 안전 상태만 확인한다. |
+
+### 3.18. External Alert Automation
+| Actor | System / n8n |
+|------|--------|
+| Description | 중요 이벤트를 비동기 HMAC 서명 Webhook으로 선택 전송한다. |
+
+### 3.19. Disaster Knowledge Search
+| Actor | Monitoring Operator |
+|------|--------|
+| Description | 로컬 재난 행동요령에서 질문과 관련된 문단을 검색하고 공식 출처와 함께 표시한다. |
 
 <br><br>
 <br><br>
@@ -375,6 +434,13 @@ flowchart LR
 | Approach | 사용자가 시스템 종료 시 서버와의 연결이 해제된다. |
 | Dynamics | 사용자가 시스템을 종료하는 경우 |
 | Goals | 시스템 자원을 효율적으로 관리한다. |
+
+### 4.10. Extended Monitoring Operations
+| Purpose | 계정·회원·위험구역·안전 분석과 외부 정보 연계 |
+|--------|----------------|
+| Approach | 역할별 권한으로 회원·보호자·지역·그룹을 관리하고, 위험구역·기기 경고·이동 통계·안전시설·공공 알림·재난문서 검색 결과를 관제 화면에 통합한다. 선택적으로 중요 이벤트를 n8n Webhook으로 전달한다. |
+| Dynamics | 관리 작업, 위험 또는 기기 이벤트, 공공 알림 수신, 관제자의 안전 정보 검색이 발생한 경우 |
+| Goals | 단순 위치 표시를 넘어 실제 관제 의사결정에 필요한 정보와 이력을 한 화면에서 제공한다. |
 
 
 # 5. Problem statement
@@ -460,7 +526,9 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 - 클라이언트는 SOS 신호를 서버로 전송한다.  
 - 서버는 해당 정보를 관제 시스템에 전달한다.
 - SOS 요청에는 위치 및 상태 정보가 포함된다.  
-- SOS 상태는 `OPEN`, `ACKNOWLEDGED`, `RESOLVED`, `CANCELLED`로 관리한다.
+- SOS 상태는 `OPEN`, `ACKNOWLEDGED`, `DISPATCHED`, `RESOLVED`,
+  `CANCELLED`로 관리한다.
+- 관제 담당자, 처리 메모와 단계별 변경 시각을 이력으로 저장한다.
 
 이를 통해 긴급 상황에서 빠른 구조 요청이 가능하다.
 
@@ -473,6 +541,7 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 - 현재 MVP에서 클라이언트는 사용자의 위치 전송 동작 또는 위치 조회 성공 시 데이터를 서버에 전송한다.
 - 사용자가 자동 위치 공유를 선택하면 브라우저 위치 변경을 감지하여 서버로 전송한다.
 - 서버는 해당 정보를 관제자에게 실시간으로 전달한다.
+- 관제자는 필요할 때 최신 좌표를 주소로 변환해 확인할 수 있다.
 - 데이터 지연 및 손실을 최소화하는 구조를 유지한다.  
 
 이를 통해 정확한 모니터링이 가능하다.
@@ -486,12 +555,14 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 - 위치 수집 목적과 보존 기간을 사용자에게 안내한다.
 - 사용자의 명시적 동의를 받고 언제든 공유를 중단할 수 있게 한다.
 - 관제자는 인증과 권한 확인 후 필요한 사용자 정보만 조회한다.
+- 보호자는 보호 대상 사용자가 직접 계정을 연결한 경우에만 최신 안전 상태와 위치를 조회한다.
 - 위치 조회와 SOS 처리 이력을 감사 로그로 남긴다.
 - 보존 기간이 끝난 위치 정보는 복구할 수 없도록 파기한다.
 
-현재 MVP에는 PBKDF2 비밀번호 해싱, 12시간 Bearer 세션, 전국·지역·사용자 역할
-검사와 회원 삭제 기능이 구현되어 있다. 다만 HTTPS, HttpOnly 쿠키, MFA, 영구 감사
-로그, 법적 보존 기간에 따른 자동 파기와 백업 정책은 실제 배포 전에 추가해야 한다.
+현재 MVP에는 PBKDF2 비밀번호 해싱, 12시간 Bearer 세션, 전국·지역·사용자·보호자
+역할 검사, 사용자 동의 기반 보호자 연결과 회원 삭제 기능이 구현되어 있다. 다만
+HTTPS, HttpOnly 쿠키, MFA, 영구 감사 로그, 법적 보존 기간에 따른 자동 파기와
+백업 정책은 실제 배포 전에 추가해야 한다.
 
 ---
 
@@ -516,10 +587,16 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 | Client Registry | Hash Map (`clientId → Client`) | 사용자 등록, 조회, 상태 변경을 평균 `O(1)`에 처리 |
 | User Accounts | SQLite Table (`users`) | 계정, 역할, 지역과 선택형 프로필을 영구 저장 |
 | Login Sessions | SQLite Table (`sessions`) | 해시된 Bearer 토큰과 12시간 만료 시각 관리 |
+| Guardian Links | SQLite Junction Table (`guardian_links`) | 보호자와 보호 대상의 다대다 연결, 중복 방지와 계정 삭제 시 연쇄 정리 |
 | User Index | Hash Map (`userId → clientId`) | 로그인 계정과 관제 단말을 평균 `O(1)`에 연결 |
 | Region Index | Hash Map (`regionId → Set[clientId]`) | 지역별 사용자 조회와 집계를 전체 순회 없이 수행 |
 | Route History | Hash Map + Bounded List | 사용자별 위치를 시간순으로 저장하고 최대 개수를 제한 |
 | Danger Areas | List | 현재 위험 지역 수가 적어 순차 비교가 단순하고 충분히 빠름 |
+| Polygon Danger Areas | Vertex List | Ray Casting으로 비정형 구역 내부 여부 판정 |
+| Client Groups | Hash Map + Member List | 그룹별 사용자 일괄 관리와 지도 필터 |
+| Audit Logs | Bounded List | 최근 관리자 작업 500건을 시간 역순으로 보존 |
+| Notification Queue | Bounded Queue | n8n 장애가 실시간 위치·SOS 처리에 전파되지 않도록 비동기 분리 |
+| Disaster Knowledge | Markdown Sections + Token Index | 공식 행동요령 문단을 출처와 함께 검색하고 생성형 환각 방지 |
 | SOS Events | Hash Map | 이벤트 ID로 구조 접수 및 완료 상태를 빠르게 갱신 |
 | Event Timeline | Bounded List | 최신 이벤트를 앞에 추가하고 오래된 이벤트를 제거 |
 | SSE Subscribers | Queue List | 관제 화면별 이벤트를 독립적으로 전달하고 느린 연결을 분리 |
@@ -537,11 +614,15 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 | Circular Area Check | Distance ≤ Radius | 사용자와 위험 지역 중심의 거리가 반경 이내인지 판정 |
 | Overlapping Area Selection | Maximum Severity Selection | 겹치는 위험 지역 중 심각도가 가장 높은 지역 선택 |
 | Route Construction | Time-ordered Accumulation | 위치 데이터를 측정 시각 순서로 연결하여 이동 경로 생성 |
-| SOS Processing | State Machine | `OPEN → ACKNOWLEDGED → RESOLVED` 또는 `CANCELLED` 상태로 구조 진행 관리 |
+| SOS Processing | State Machine | `OPEN → ACKNOWLEDGED → DISPATCHED → RESOLVED` 또는 `CANCELLED` 상태로 구조 진행 관리 |
 | Real-time Notification | Publish-Subscribe | 상태 변경을 구독 중인 관제 화면에 전파 |
 | Regional Filtering | Indexed Set Lookup | 역할과 지역 ID를 기준으로 조회 범위를 제한 |
 | Public Data Normalization | Adapter / Mapping | 기관별 JSON·XML·텍스트 응답을 공통 알림 구조로 변환 |
 | Orphan Client Cleanup | Set Membership Filtering | 실제 회원 ID 집합에 없는 단말과 관련 데이터를 시작 시 제거 |
+| Polygon Area Check | Ray Casting | 다각형 꼭짓점을 기준으로 사용자 위치의 내부 포함 여부 판정 |
+| Movement Analytics | Bounded Route Scan | 최근 경로를 한 번 순회해 거리·정차·방문 빈도 계산 |
+| Webhook Delivery | Bounded Queue + Worker | 외부 자동화 지연을 위치·SOS 요청 처리와 분리 |
+| Disaster Retrieval | Tokenization + IDF Scoring | 질문과 관련된 문단을 순위화하고 출처와 함께 반환 |
 
 위험 지역이 대규모로 증가하면 모든 지역을 순차 비교하는 대신 R-tree, Quadtree 또는 Geohash 기반 공간 인덱스를 적용하여 후보 지역을 먼저 줄일 수 있다.
 
@@ -573,7 +654,7 @@ Real Time Location System에서 클라이언트와 관제자가 서버를 통해
 | JSON | 위치, 상태 및 SOS 데이터를 표현하는 구조화된 데이터 형식 |
 | SSE | 서버가 관제 화면에 상태 변경 이벤트를 지속적으로 전달하는 방식 |
 | Location Data | 위도, 경도, 정확도 및 측정 시각으로 구성된 위치 정보 |
-| Danger Area | 중심 좌표, 반경과 심각도로 정의되는 위험 지역 |
+| Danger Area | 중심·반경의 원형 또는 꼭짓점 목록의 다각형으로 정의되는 위험 지역 |
 | SOS | 사용자가 관제자에게 보내는 긴급 구조 요청 |
 
 # 9. References
